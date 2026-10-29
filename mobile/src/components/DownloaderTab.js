@@ -322,7 +322,7 @@ export default function DownloaderTab({ onSwitchToHistory }) {
               <Ionicons
                 name="musical-notes"
                 size={18}
-                color={mediaType === 'mp3' ? '#FFFFFF' : '#C4B5FD'}
+                color={mediaType === 'mp3' ? '#FFFFFF' : '#64748B'}
               />
               <Text
                 style={[
@@ -348,7 +348,7 @@ export default function DownloaderTab({ onSwitchToHistory }) {
               <Ionicons
                 name="videocam"
                 size={18}
-                color={mediaType === 'mp4' ? '#FFFFFF' : '#C4B5FD'}
+                color={mediaType === 'mp4' ? '#FFFFFF' : '#64748B'}
               />
               <Text
                 style={[
@@ -383,7 +383,7 @@ export default function DownloaderTab({ onSwitchToHistory }) {
                   <Ionicons
                     name={isSelected ? 'checkmark-circle' : 'radio-button-off'}
                     size={16}
-                    color={isSelected ? '#F472B6' : '#6B7280'}
+                    color={isSelected ? '#2563EB' : '#94A3B8'}
                   />
                   <Text
                     style={[
@@ -516,7 +516,7 @@ export default function DownloaderTab({ onSwitchToHistory }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0C0714',
+    backgroundColor: '#F8FAFC',
   },
   contentContainer: {
     padding: 16,
@@ -528,36 +528,41 @@ const styles = StyleSheet.create({
   appTitle: {
     fontSize: 22,
     fontWeight: '800',
-    color: '#FAF5FF',
+    color: '#0F172A',
     letterSpacing: -0.5,
   },
   appSubtitle: {
     fontSize: 13,
-    color: '#C4B5FD',
+    color: '#64748B',
     marginTop: 4,
     lineHeight: 18,
   },
   card: {
-    backgroundColor: '#171026',
+    backgroundColor: '#FFFFFF',
     borderRadius: 16,
     padding: 16,
     marginBottom: 16,
     borderWidth: 1,
-    borderColor: '#2E1F47',
+    borderColor: '#E2E8F0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    elevation: 2,
   },
   inputLabel: {
     fontSize: 13,
-    fontWeight: '600',
-    color: '#F5D0FE',
+    fontWeight: '700',
+    color: '#334155',
     marginBottom: 8,
   },
   inputWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#1F1533',
+    backgroundColor: '#F8FAFC',
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#3B2857',
+    borderColor: '#CBD5E1',
     paddingHorizontal: 12,
   },
   linkIcon: {
@@ -566,7 +571,7 @@ const styles = StyleSheet.create({
   textInput: {
     flex: 1,
     height: 46,
-    color: '#FAF5FF',
+    color: '#0F172A',
     fontSize: 14,
   },
   clearBtn: {
@@ -583,14 +588,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    backgroundColor: '#28193D',
+    backgroundColor: '#F1F5F9',
     height: 42,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#4C2D75',
+    borderColor: '#CBD5E1',
   },
   pasteBtnText: {
-    color: '#F472B6',
+    color: '#334155',
     fontSize: 13,
     fontWeight: '600',
   },
@@ -600,13 +605,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    backgroundColor: '#D946EF',
+    backgroundColor: '#2563EB',
     height: 42,
     borderRadius: 10,
-    shadowColor: '#EC4899',
-    shadowOpacity: 0.4,
-    shadowRadius: 8,
-    elevation: 4,
+    shadowColor: '#2563EB',
+    shadowOpacity: 0.25,
+    shadowRadius: 6,
+    elevation: 3,
   },
   fetchBtnText: {
     color: '#FFFFFF',
@@ -617,15 +622,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: '#450A0A',
+    backgroundColor: '#FEF2F2',
     borderRadius: 10,
     padding: 10,
     marginTop: 12,
     borderWidth: 1,
-    borderColor: '#7F1D1D',
+    borderColor: '#FCA5A5',
   },
   errorText: {
-    color: '#FECACA',
+    color: '#DC2626',
     fontSize: 12,
     flex: 1,
   },
@@ -640,7 +645,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     overflow: 'hidden',
     position: 'relative',
-    backgroundColor: '#1F1533',
+    backgroundColor: '#E2E8F0',
   },
   thumbnail: {
     width: '100%',
@@ -667,7 +672,7 @@ const styles = StyleSheet.create({
   videoTitle: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#FAF5FF',
+    color: '#0F172A',
     lineHeight: 18,
   },
   channelRow: {
@@ -678,7 +683,7 @@ const styles = StyleSheet.create({
   },
   channelText: {
     fontSize: 12,
-    color: '#C4B5FD',
+    color: '#64748B',
     fontWeight: '500',
   },
   viewsRow: {
@@ -688,21 +693,23 @@ const styles = StyleSheet.create({
   },
   viewsText: {
     fontSize: 11,
-    color: '#9CA3AF',
+    color: '#94A3B8',
   },
   sectionLabel: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#F5D0FE',
+    color: '#334155',
     marginBottom: 8,
     marginTop: 6,
   },
   formatToggleContainer: {
     flexDirection: 'row',
-    backgroundColor: '#1F1533',
+    backgroundColor: '#F1F5F9',
     borderRadius: 12,
     padding: 4,
     marginBottom: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
   },
   formatTab: {
     flex: 1,
@@ -714,14 +721,14 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   formatTabActive: {
-    backgroundColor: '#EC4899',
-    shadowColor: '#EC4899',
-    shadowOpacity: 0.35,
-    shadowRadius: 6,
-    elevation: 3,
+    backgroundColor: '#2563EB',
+    shadowColor: '#2563EB',
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 2,
   },
   formatTabText: {
-    color: '#C4B5FD',
+    color: '#64748B',
     fontSize: 13,
     fontWeight: '600',
   },
@@ -736,24 +743,24 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    backgroundColor: '#1F1533',
+    backgroundColor: '#FFFFFF',
     paddingVertical: 10,
     paddingHorizontal: 12,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#322049',
+    borderColor: '#E2E8F0',
   },
   qualityChipSelected: {
-    borderColor: '#F472B6',
-    backgroundColor: 'rgba(244, 114, 182, 0.12)',
+    borderColor: '#2563EB',
+    backgroundColor: '#EFF6FF',
   },
   qualityChipText: {
-    color: '#C4B5FD',
+    color: '#475569',
     fontSize: 13,
     fontWeight: '500',
   },
   qualityChipTextSelected: {
-    color: '#FAF5FF',
+    color: '#1D4ED8',
     fontWeight: '700',
   },
   downloadActionBtn: {
@@ -761,13 +768,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    backgroundColor: '#D946EF',
+    backgroundColor: '#2563EB',
     height: 48,
     borderRadius: 12,
-    shadowColor: '#D946EF',
-    shadowOpacity: 0.4,
-    shadowRadius: 10,
-    elevation: 5,
+    shadowColor: '#2563EB',
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 4,
   },
   downloadActionBtnText: {
     color: '#FFFFFF',
@@ -775,8 +782,8 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   taskCard: {
-    borderColor: '#C084FC',
-    backgroundColor: '#1F1533',
+    borderColor: '#BFDBFE',
+    backgroundColor: '#F8FAFC',
   },
   taskHeader: {
     flexDirection: 'row',
@@ -801,27 +808,27 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   taskTitle: {
-    color: '#FAF5FF',
+    color: '#0F172A',
     fontSize: 13,
     fontWeight: '600',
     flex: 1,
   },
   percentText: {
-    color: '#F472B6',
+    color: '#2563EB',
     fontSize: 15,
     fontWeight: '800',
     marginLeft: 8,
   },
   progressBarBg: {
     height: 8,
-    backgroundColor: '#2A1B3F',
+    backgroundColor: '#E2E8F0',
     borderRadius: 4,
     overflow: 'hidden',
     marginBottom: 8,
   },
   progressBarFill: {
     height: '100%',
-    backgroundColor: '#EC4899',
+    backgroundColor: '#2563EB',
     borderRadius: 4,
   },
   taskMetaRow: {
@@ -830,12 +837,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   taskStatusText: {
-    color: '#E9D5FF',
+    color: '#334155',
     fontSize: 12,
     fontWeight: '500',
   },
   taskEtaText: {
-    color: '#C4B5FD',
+    color: '#64748B',
     fontSize: 11,
   },
   completedActions: {
@@ -847,13 +854,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    backgroundColor: '#EC4899',
+    backgroundColor: '#16A34A',
     height: 44,
     borderRadius: 10,
-    shadowColor: '#EC4899',
-    shadowOpacity: 0.4,
-    shadowRadius: 8,
-    elevation: 4,
+    shadowColor: '#16A34A',
+    shadowOpacity: 0.25,
+    shadowRadius: 6,
+    elevation: 3,
   },
   saveFileBtnText: {
     color: '#FFFFFF',
@@ -868,7 +875,7 @@ const styles = StyleSheet.create({
     height: 36,
   },
   historyShortcutText: {
-    color: '#F472B6',
+    color: '#2563EB',
     fontSize: 12,
     fontWeight: '600',
   },

@@ -20,7 +20,7 @@ export default function App() {
 
   return (
     <SafeAreaView style={styles.safeContainer}>
-      <StatusBar style="light" />
+      <StatusBar style="dark" />
 
       {/* Üst Başlık Çubuğu */}
       <View style={styles.topHeader}>
@@ -66,7 +66,7 @@ export default function App() {
           <Ionicons
             name={activeTab === 'downloader' ? 'download' : 'download-outline'}
             size={22}
-            color={activeTab === 'downloader' ? '#F472B6' : '#A78BFA'}
+            color={activeTab === 'downloader' ? '#2563EB' : '#94A3B8'}
           />
           <Text
             style={[
@@ -88,7 +88,7 @@ export default function App() {
           <Ionicons
             name={activeTab === 'history' ? 'folder' : 'folder-outline'}
             size={22}
-            color={activeTab === 'history' ? '#F472B6' : '#A78BFA'}
+            color={activeTab === 'history' ? '#2563EB' : '#94A3B8'}
           />
           <Text
             style={[
@@ -107,7 +107,7 @@ export default function App() {
 const styles = StyleSheet.create({
   safeContainer: {
     flex: 1,
-    backgroundColor: '#0C0714',
+    backgroundColor: '#F8FAFC',
     paddingTop: Platform.OS === 'android' ? RNStatusBar.currentHeight : 0,
     width: '100%',
     height: '100%',
@@ -120,8 +120,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     paddingVertical: 14,
     borderBottomWidth: 1,
-    borderBottomColor: '#28173E',
-    backgroundColor: '#130C22',
+    borderBottomColor: '#E2E8F0',
+    backgroundColor: '#FFFFFF',
   },
   logoRow: {
     flexDirection: 'row',
@@ -129,15 +129,15 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   logoBadge: {
-    width: 32,
-    height: 32,
+    width: 34,
+    height: 34,
     borderRadius: 8,
-    backgroundColor: '#1F1533',
+    backgroundColor: '#F1F5F9',
     alignItems: 'center',
     justifyContent: 'center',
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: '#4C2D75',
+    borderColor: '#E2E8F0',
   },
   logoImage: {
     width: 26,
@@ -146,44 +146,49 @@ const styles = StyleSheet.create({
   brandTitle: {
     fontSize: 18,
     fontWeight: '800',
-    color: '#FAF5FF',
+    color: '#0F172A',
     letterSpacing: -0.4,
   },
   headerRightBadge: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: 'rgba(217, 70, 239, 0.12)',
+    backgroundColor: '#F0FDF4',
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: '#D946EF',
+    borderColor: '#BBF7D0',
   },
   statusDot: {
     width: 7,
     height: 7,
     borderRadius: 4,
-    backgroundColor: '#10B981',
+    backgroundColor: '#16A34A',
   },
   statusBadgeText: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#F472B6',
+    color: '#16A34A',
   },
   tabContentArea: {
     flex: 1,
   },
   bottomNav: {
     flexDirection: 'row',
-    backgroundColor: '#130C22',
+    backgroundColor: '#FFFFFF',
     borderTopWidth: 1,
-    borderTopColor: '#28173E',
+    borderTopColor: '#E2E8F0',
     paddingTop: 10,
     paddingBottom: Platform.OS === 'web' ? 22 : 12,
     paddingHorizontal: 32,
     justifyContent: 'space-around',
     alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    elevation: 8,
   },
   navItem: {
     alignItems: 'center',
@@ -193,16 +198,16 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
   navItemActive: {
-    backgroundColor: 'rgba(236, 72, 153, 0.15)',
+    backgroundColor: '#EFF6FF',
   },
   navLabel: {
     fontSize: 12,
-    color: '#A78BFA',
+    color: '#64748B',
     marginTop: 3,
     fontWeight: '500',
   },
   navLabelActive: {
-    color: '#F472B6',
+    color: '#2563EB',
     fontWeight: '700',
   },
 });

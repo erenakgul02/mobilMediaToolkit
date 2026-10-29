@@ -5,11 +5,11 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "dark",
+    "userInterfaceStyle": "light",
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#0C0714"
+      "backgroundColor": "#FFFFFF"
     },
     "ios": {
       "supportsTablet": true,
@@ -19,7 +19,7 @@
       "package": "com.alierenakgul.mobilmediatoolkit",
       "versionCode": 1,
       "adaptiveIcon": {
-        "backgroundColor": "#0C0714",
+        "backgroundColor": "#FFFFFF",
         "foregroundImage": "./assets/android-icon-foreground.png"
       },
       "permissions": [
@@ -32,8 +32,8 @@
       "favicon": "./assets/favicon.png",
       "name": "Mobil Media Toolkit",
       "shortName": "MediaToolkit",
-      "themeColor": "#0C0714",
-      "backgroundColor": "#0C0714",
+      "themeColor": "#FFFFFF",
+      "backgroundColor": "#FFFFFF",
       "display": "standalone",
       "orientation": "portrait"
     },
