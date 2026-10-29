@@ -1,27 +1,10 @@
-import { Platform, NativeModules, DeviceEventEmitter } from 'react-native';
+import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { getServerUrl } from '../config';
 
 const LOCAL_HISTORY_KEY = '@mobil_media_toolkit_local_downloads';
-const YoutubeDLNative = NativeModules.YoutubeDLNative;
-
-// In-memory native task status tracker for progress polling
-const nativeTasks = {};
-
-// Listen to native download progress events from Android Kotlin module
-if (Platform.OS === 'android') {
-  DeviceEventEmitter.addListener('onNativeDownloadProgress', (event) => {
-    const { progress, eta, line } = event;
-    const activeId = Object.keys(nativeTasks).find((id) => nativeTasks[id].status === 'downloading');
-    if (activeId && nativeTasks[activeId]) {
-      nativeTasks[activeId].progress = Math.round(progress);
-      nativeTasks[activeId].eta = eta ? `${Math.round(eta)}s` : '';
-      nativeTasks[activeId].speed = line ? line.slice(0, 30) : '';
-    }
-  });
-}
 
 export async function getLocalHistory() {
   try {
@@ -61,11 +44,6 @@ export async function deleteLocalHistoryItem(filename) {
 }
 
 export async function checkHealth(customUrl = null) {
-  // If running with native module on Android, health is always OK!
-  if (YoutubeDLNative) {
-    return { status: 'online', native: true };
-  }
-
   const baseUrl = customUrl || (await getServerUrl());
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 3500);
@@ -84,7 +62,7 @@ export async function checkHealth(customUrl = null) {
 }
 
 export async function fetchVideoInfo(url) {
-  // 1. YouTube oEmbed (Hızlı, sunucusuz, HTTPS üzerinden doğrudan Google API)
+  // 1. YouTube oEmbed (Hızlı, sunucu beklemeden doğrudan video başlığı ve resmi)
   try {
     const oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`;
     const res = await fetch(oembedUrl);
@@ -96,42 +74,20 @@ export async function fetchVideoInfo(url) {
         author: data.author_name || 'YouTube',
         duration: 0,
         formats_audio: [
-          { label: '320 kbps (Yüksek Kalite)', value: '320' },
-          { label: '192 kbps (Standart Kalite)', value: '192' },
+          { label: '320 kbps (Yüksek Kalite MP3)', value: '320' },
+          { label: '192 kbps (Standart Kalite MP3)', value: '192' },
         ],
         formats_video: [
-          { label: '1080p HD Video', value: '1080p' },
-          { label: '720p HD Video', value: '720p' },
+          { label: '1080p Full HD Video (MP4)', value: '1080p' },
+          { label: '720p HD Video (MP4)', value: '720p' },
         ],
       };
     }
   } catch (e) {
-    console.log('oEmbed fallbacking to native or backend:', e);
+    // Fallback to backend info
   }
 
-  // 2. Native Module getVideoInfo
-  if (YoutubeDLNative && YoutubeDLNative.getVideoInfo) {
-    try {
-      const nativeData = await YoutubeDLNative.getVideoInfo(url);
-      return {
-        title: nativeData.title || 'YouTube Medya',
-        thumbnail: nativeData.thumbnail || '',
-        author: nativeData.uploader || 'YouTube',
-        duration: nativeData.duration || 0,
-        formats_audio: [
-          { label: '320 kbps (Yüksek Kalite)', value: '320' },
-        ],
-        formats_video: [
-          { label: '1080p HD Video', value: '1080p' },
-          { label: '720p HD Video', value: '720p' },
-        ],
-      };
-    } catch (err) {
-      console.warn('Native video info hatası:', err);
-    }
-  }
-
-  // 3. Fallback to backend (Web / Geliştirici bilgisayarı)
+  // 2. Arka uç sunucu üzerinden detaylı analiz
   const baseUrl = await getServerUrl();
   const res = await fetch(`${baseUrl}/api/info`, {
     method: 'POST',
@@ -147,48 +103,6 @@ export async function fetchVideoInfo(url) {
 }
 
 export async function startDownload({ url, type, quality, title, thumbnail }) {
-  // Eğer Android telefon üzerindeysek ve yerel motor (Native Module) varsa:
-  if (YoutubeDLNative && YoutubeDLNative.download) {
-    const taskId = `native_${Date.now()}`;
-    nativeTasks[taskId] = {
-      id: taskId,
-      status: 'downloading',
-      progress: 0,
-      speed: 'Başlatılıyor...',
-      eta: '',
-      filename: `${title || 'Medya'}.${type === 'mp3' ? 'mp3' : 'mp4'}`,
-      isNative: true,
-    };
-
-    // Arka planda indirmeyi başlat
-    (async () => {
-      try {
-        const result = await YoutubeDLNative.download(url, type, quality);
-        nativeTasks[taskId].status = 'completed';
-        nativeTasks[taskId].progress = 100;
-
-        // Yerel geçmişe ekle
-        const filename = `${title || 'YouTube Medya'}.${type === 'mp3' ? 'mp3' : 'mp4'}`;
-        await addLocalHistoryItem({
-          filename: filename,
-          title: title || 'YouTube Medya',
-          thumbnail: thumbnail || '',
-          type: type,
-          quality: quality,
-          download_url: result.outputDir ? `file://${result.outputDir}/${filename}` : '',
-          createdAt: new Date().toISOString(),
-        });
-      } catch (err) {
-        console.error('Native download error:', err);
-        nativeTasks[taskId].status = 'failed';
-        nativeTasks[taskId].error = (err && (err.message || err.toString())) || 'Yerel indirme başarısız oldu.';
-      }
-    })();
-
-    return { taskId };
-  }
-
-  // Fallback to backend (Web veya sunucu modu)
   const baseUrl = await getServerUrl();
   const res = await fetch(`${baseUrl}/api/download`, {
     method: 'POST',
@@ -200,14 +114,10 @@ export async function startDownload({ url, type, quality, title, thumbnail }) {
   if (!res.ok) {
     throw new Error(data.error || 'İndirme başlatılamadı.');
   }
-  return data;
+  return data; // { taskId: '...' }
 }
 
 export async function checkProgress(taskId) {
-  if (nativeTasks[taskId]) {
-    return nativeTasks[taskId];
-  }
-
   const baseUrl = await getServerUrl();
   const res = await fetch(`${baseUrl}/api/progress/${taskId}`);
   const data = await res.json();
@@ -218,7 +128,6 @@ export async function checkProgress(taskId) {
 }
 
 export async function fetchHistory() {
-  // Cihaz içi geçmiş her zaman önceliklidir
   const localItems = await getLocalHistory();
   if (localItems && localItems.length > 0) {
     return localItems;
@@ -247,9 +156,12 @@ export async function deleteHistoryItem(filename) {
 }
 
 export async function downloadFileToDevice(relativeUrl, filename, onProgress) {
+  const baseUrl = await getServerUrl();
+  const fullUrl = relativeUrl.startsWith('http')
+    ? relativeUrl
+    : `${baseUrl}${relativeUrl.startsWith('/') ? '' : '/'}${relativeUrl}`;
+
   if (Platform.OS === 'web') {
-    const baseUrl = await getServerUrl();
-    const fullUrl = `${baseUrl}${relativeUrl.startsWith('/') ? '' : '/'}${relativeUrl}`;
     try {
       const link = document.createElement('a');
       link.href = fullUrl;
@@ -264,18 +176,8 @@ export async function downloadFileToDevice(relativeUrl, filename, onProgress) {
     }
   }
 
-  // Eğer zaten file:// protokolü ile yerel telefondaysa doğrudan paylaş
-  if (relativeUrl.startsWith('file://')) {
-    if (await Sharing.isAvailableAsync()) {
-      await Sharing.shareAsync(relativeUrl);
-    }
-    return { success: true, uri: relativeUrl };
-  }
-
-  // Mobil Cihaz FileSystem üzerinden indirme
+  // Mobil Cihaz (Android / iOS)
   try {
-    const baseUrl = await getServerUrl();
-    const fullUrl = `${baseUrl}${relativeUrl.startsWith('/') ? '' : '/'}${relativeUrl}`;
     const fileUri = `${FileSystem.documentDirectory}${filename}`;
     const downloadResumable = FileSystem.createDownloadResumable(
       fullUrl,
