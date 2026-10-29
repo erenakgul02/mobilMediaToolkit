@@ -1,0 +1,44 @@
+{
+  "expo": {
+    "name": "Mobil Media Toolkit",
+    "slug": "mobil-media-toolkit",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0C0714"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.alierenakgul.mobilmediatoolkit"
+    },
+    "android": {
+      "package": "com.alierenakgul.mobilmediatoolkit",
+      "versionCode": 1,
+      "adaptiveIcon": {
+        "backgroundColor": "#0C0714",
+        "foregroundImage": "./assets/android-icon-foreground.png"
+      },
+      "permissions": [
+        "INTERNET",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "name": "Mobil Media Toolkit",
+      "shortName": "MediaToolkit",
+      "themeColor": "#0C0714",
+      "backgroundColor": "#0C0714",
+      "display": "standalone",
+      "orientation": "portrait"
+    },
+    "plugins": [
+      "expo-sharing"
+    ]
+  }
+}

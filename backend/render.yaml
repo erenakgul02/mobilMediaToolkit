@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: mobil-media-toolkit-backend
+    env: python
+    region: frankfurt
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python app.py
+    envVars:
+      - key: PORT
+        value: 5000

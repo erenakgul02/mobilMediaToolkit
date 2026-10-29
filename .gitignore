@@ -1,0 +1,56 @@
+# ==========================================
+# Git Ignore - Mobil Media Toolkit
+# ==========================================
+
+# Binaries & Executables (Never push binaries to Git!)
+*.exe
+*.dll
+*.so
+*.dylib
+backend/cloudflared.exe
+
+# Downloaded user media files
+backend/downloads/*
+!backend/downloads/.gitkeep
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+venv/
+env/
+.venv/
+
+# Node & Expo dependencies & builds
+mobile/node_modules/
+mobile/.expo/
+mobile/dist/
+mobile/web-build/
+mobile/.kotlin/
+
+# Mobile Native Builds
+mobile/android/
+mobile/ios/
+*.apk
+*.aab
+*.jks
+*.p8
+*.p12
+*.key
+*.keystore
+
+# Logs & Environment files
+*.log
+npm-debug.*
+yarn-debug.*
+.env
+.env*.local
+
+# System & Editor files
+.DS_Store
+Thumbs.db
+*.lnk
+.vscode/
+.idea/
