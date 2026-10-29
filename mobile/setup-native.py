@@ -83,20 +83,6 @@ def setup_native():
         with open(main_app_path, "w", encoding="utf-8") as f:
             f.write(app_code)
 
-    # 4. Configure AndroidManifest.xml (extractNativeLibs and storage permissions)
-    manifest_path = os.path.join(ANDROID_DIR, "app", "src", "main", "AndroidManifest.xml")
-    if os.path.exists(manifest_path):
-        with open(manifest_path, "r", encoding="utf-8") as f:
-            m_code = f.read()
-
-        if "android:extractNativeLibs" not in m_code:
-            m_code = m_code.replace("<application", '<application android:extractNativeLibs="true"')
-        if "android:requestLegacyExternalStorage" not in m_code:
-            m_code = m_code.replace("<application", '<application android:requestLegacyExternalStorage="true"')
-
-        with open(manifest_path, "w", encoding="utf-8") as f:
-            f.write(m_code)
-
     print("Native setup completed successfully!")
 
 if __name__ == "__main__":

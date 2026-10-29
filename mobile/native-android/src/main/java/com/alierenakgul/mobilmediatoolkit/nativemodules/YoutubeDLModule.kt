@@ -82,7 +82,7 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
                 ensureInit()
 
                 val downloadDir = File(
-                    reactContext.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: reactContext.filesDir,
+                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
                     "MediaToolkit"
                 )
                 if (!downloadDir.exists()) {
