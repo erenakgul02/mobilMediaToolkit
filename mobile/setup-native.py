@@ -113,17 +113,18 @@ def setup_native():
                 content = content.replace("dependencies {", f"dependencies {{\n{dep_line}")
                 print("Added youtubedl-android dependencies to build.gradle")
 
-        # Ensure abiFilters for all common architectures
+        # Optimize APK size: target arm64-v8a (modern 64-bit Android smartphones)
+        # This keeps the APK compact (~48 MB instead of 236 MB)
         abi_line = """
         ndk {
-            abiFilters "arm64-v8a", "armeabi-v7a", "x86", "x86_64"
+            abiFilters "arm64-v8a"
         }
 """
         if "abiFilters" in content:
-            content = re.sub(r'abiFilters\s+["\'][^"\']*["\'](,\s*["\'][^"\']*["\'])*', 'abiFilters "arm64-v8a", "armeabi-v7a", "x86", "x86_64"', content)
+            content = re.sub(r'abiFilters\s+["\'][^"\']*["\'](,\s*["\'][^"\']*["\'])*', 'abiFilters "arm64-v8a"', content)
         elif "defaultConfig {" in content:
             content = content.replace("defaultConfig {", f"defaultConfig {{\n{abi_line}")
-            print("Added abiFilters to build.gradle")
+            print("Added arm64-v8a abiFilters to build.gradle")
 
         # Explicitly enforce useLegacyPackaging in packagingOptions
         if "useLegacyPackaging" in content:
