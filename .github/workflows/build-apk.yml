@@ -5,6 +5,9 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     name: Android APK Build
@@ -49,3 +52,18 @@ jobs:
         with:
           name: MediaToolkit-APK
           path: mobile/android/app/build/outputs/apk/debug/*.apk
+
+      - name: APK Dosyasini Hazirla
+        run: |
+          cp mobile/android/app/build/outputs/apk/debug/app-debug.apk mobilMediaToolkit.apk
+
+      - name: GitHub Releases Uzerinde Yayinla
+        uses: softprops/action-gh-release@v2
+        continue-on-error: true
+        with:
+          tag_name: v1.0.0
+          name: "Mobil Media Toolkit v1.0.0"
+          body: "Android cihazlar icin dogrudan yuklenebilir hazir APK dosyasidir."
+          files: mobilMediaToolkit.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
