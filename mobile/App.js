@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   StyleSheet,
   View,
@@ -7,6 +7,7 @@ import {
   SafeAreaView,
   Image,
   Platform,
+  NativeModules,
   StatusBar as RNStatusBar,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
@@ -18,11 +19,20 @@ import HistoryTab from './src/components/HistoryTab';
 export default function App() {
   const [activeTab, setActiveTab] = useState('downloader');
 
+  useEffect(() => {
+    // Uygulama acildiginda yerel motoru (YoutubeDL ve FFmpeg) arka planda hazirla
+    if (NativeModules.YoutubeDLNative && NativeModules.YoutubeDLNative.initEngine) {
+      NativeModules.YoutubeDLNative.initEngine().catch((err) => {
+        console.warn('Native init uyarisi:', err);
+      });
+    }
+  }, []);
+
   return (
     <SafeAreaView style={styles.safeContainer}>
       <StatusBar style="dark" />
 
-      {/* Üst Başlık Çubuğu */}
+      {/* Ust Baslik Cubugu */}
       <View style={styles.topHeader}>
         <View style={styles.logoRow}>
           <View style={styles.logoBadge}>
@@ -41,7 +51,7 @@ export default function App() {
         </View>
       </View>
 
-      {/* Ana Gövde (Aktif Ekran) */}
+      {/* Ana Govde (Aktif Ekran) */}
       <View style={styles.tabContentArea}>
         {activeTab === 'downloader' ? (
           <DownloaderTab
@@ -54,7 +64,7 @@ export default function App() {
         )}
       </View>
 
-      {/* Alt Navigasyon Çubuğu */}
+      {/* Alt Navigasyon Cubugu */}
       <View style={styles.bottomNav}>
         <TouchableOpacity
           style={[

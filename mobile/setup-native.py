@@ -57,21 +57,26 @@ def setup_native():
         with open(build_gradle, "w", encoding="utf-8") as f:
             f.write(content)
 
-    # 3. Register package in MainApplication.kt
+    # 3. Register package and initialize in MainApplication.kt
     main_app_path = os.path.join(ANDROID_DIR, "app", "src", "main", "java", "com", "alierenakgul", "mobilmediatoolkit", "MainApplication.kt")
     if os.path.exists(main_app_path):
         with open(main_app_path, "r", encoding="utf-8") as f:
             app_code = f.read()
 
-        import_line = "import com.alierenakgul.mobilmediatoolkit.nativemodules.YoutubeDLPackage\n"
-        if "import com.alierenakgul.mobilmediatoolkit.nativemodules.YoutubeDLPackage" not in app_code:
-            lines = app_code.splitlines()
-            new_lines = []
-            for line in lines:
-                new_lines.append(line)
-                if line.startswith("package "):
-                    new_lines.append(import_line)
-            app_code = "\n".join(new_lines)
+        import_lines = [
+            "import com.alierenakgul.mobilmediatoolkit.nativemodules.YoutubeDLPackage",
+            "import com.yausername.youtubedl_android.YoutubeDL",
+            "import com.yausername.ffmpeg.FFmpeg",
+        ]
+        lines = app_code.splitlines()
+        new_lines = []
+        for line in lines:
+            new_lines.append(line)
+            if line.startswith("package "):
+                for imp in import_lines:
+                    if imp not in app_code:
+                        new_lines.append(imp)
+        app_code = "\n".join(new_lines)
 
         if "YoutubeDLPackage()" not in app_code:
             if "PackageList(this).packages.apply {" in app_code:
@@ -79,6 +84,20 @@ def setup_native():
             elif "PackageList(this).packages" in app_code:
                 app_code = app_code.replace("PackageList(this).packages", "PackageList(this).packages.apply { add(YoutubeDLPackage()) }")
             print("Registered YoutubeDLPackage in MainApplication.kt")
+
+        # Initialize YoutubeDL in MainApplication.onCreate()
+        if "YoutubeDL.getInstance().init(this)" not in app_code:
+            init_code = """
+    try {
+      YoutubeDL.getInstance().init(this)
+      FFmpeg.getInstance().init(this)
+    } catch (e: Exception) {
+      android.util.Log.e("MainApplication", "YoutubeDL init failed", e)
+    }
+"""
+            if "super.onCreate()" in app_code:
+                app_code = app_code.replace("super.onCreate()", f"super.onCreate(){init_code}")
+                print("Added YoutubeDL.init(this) to MainApplication.onCreate()")
 
         with open(main_app_path, "w", encoding="utf-8") as f:
             f.write(app_code)
