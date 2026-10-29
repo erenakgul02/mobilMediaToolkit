@@ -157,9 +157,23 @@ export async function deleteHistoryItem(filename) {
 
 export async function downloadFileToDevice(relativeUrl, filename, onProgress) {
   const baseUrl = await getServerUrl();
-  const fullUrl = relativeUrl.startsWith('http')
-    ? relativeUrl
-    : `${baseUrl}${relativeUrl.startsWith('/') ? '' : '/'}${relativeUrl}`;
+  let fullUrl = relativeUrl;
+
+  if (!fullUrl.startsWith('http')) {
+    const slash = relativeUrl.startsWith('/') ? '' : '/';
+    if (relativeUrl.includes('/api/download-direct/')) {
+      const parts = relativeUrl.split('/api/download-direct/');
+      fullUrl = `${baseUrl}/api/download-direct/${encodeURIComponent(decodeURIComponent(parts[1]))}`;
+    } else {
+      fullUrl = `${baseUrl}${slash}${relativeUrl}`;
+    }
+  } else {
+    try {
+      fullUrl = encodeURI(decodeURI(fullUrl));
+    } catch (e) {
+      // keep fullUrl as is
+    }
+  }
 
   if (Platform.OS === 'web') {
     try {
@@ -178,7 +192,10 @@ export async function downloadFileToDevice(relativeUrl, filename, onProgress) {
 
   // Mobil Cihaz (Android / iOS)
   try {
-    const fileUri = `${FileSystem.documentDirectory}${filename}`;
+    const cleanFilename = (filename || 'media')
+      .replace(/[\\/:*?"<>|]/g, '_')
+      .trim();
+    const fileUri = `${FileSystem.documentDirectory}${cleanFilename}`;
     const downloadResumable = FileSystem.createDownloadResumable(
       fullUrl,
       fileUri,
