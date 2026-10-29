@@ -84,7 +84,17 @@ def setup_native():
         with open(main_app_path, "w", encoding="utf-8") as f:
             f.write(app_code)
 
-    # 4. Configure AndroidManifest.xml (extractNativeLibs and storage permissions)
+    # 4. Update gradle.properties (overridePathCheck)
+    gradle_props = os.path.join(ANDROID_DIR, "gradle.properties")
+    if os.path.exists(gradle_props):
+        with open(gradle_props, "r", encoding="utf-8") as f:
+            gp_code = f.read()
+        if "android.overridePathCheck=true" not in gp_code:
+            gp_code += "\nandroid.overridePathCheck=true\n"
+            with open(gradle_props, "w", encoding="utf-8") as f:
+                f.write(gp_code)
+
+    # 5. Configure AndroidManifest.xml (extractNativeLibs and storage permissions)
     manifest_path = os.path.join(ANDROID_DIR, "app", "src", "main", "AndroidManifest.xml")
     if os.path.exists(manifest_path):
         with open(manifest_path, "r", encoding="utf-8") as f:
