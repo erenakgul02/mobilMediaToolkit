@@ -161,15 +161,23 @@ export async function startDownload({ url, type, quality, title, thumbnail }) {
         nativeTasks[taskId].status = 'completed';
         nativeTasks[taskId].progress = 100;
 
-        const filename = `${(title || 'YouTube Medya').replace(/[\\/:*?"<>|]/g, '_')}.${type === 'mp3' ? 'mp3' : 'mp4'}`;
+        const defaultFilename = `${(title || 'YouTube Medya').replace(/[\\/:*?"<>|]/g, '_')}.${type === 'mp3' ? 'mp3' : 'mp4'}`;
+        const actualFilename = result.fileName || defaultFilename;
+        const downloadUrl = result.filePath
+          ? `file://${result.filePath}`
+          : (result.outputDir ? `file://${result.outputDir}/${actualFilename}` : '');
+
+        nativeTasks[taskId].filename = actualFilename;
+        nativeTasks[taskId].download_url = downloadUrl;
+
         await addLocalHistoryItem({
           id: taskId,
-          filename: filename,
+          filename: actualFilename,
           title: title || 'YouTube Medya',
           thumbnail: thumbnail || '',
           type: type,
           quality: quality,
-          download_url: result.outputDir ? `file://${result.outputDir}/${filename}` : '',
+          download_url: downloadUrl,
           createdAt: new Date().toISOString(),
         });
       } catch (err) {

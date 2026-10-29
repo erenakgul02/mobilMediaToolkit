@@ -42,18 +42,14 @@ jobs:
         run: |
           python3 mobile/setup-native.py
 
-      - name: HTTP Cleartext Trafik Yetkisi Ekle
-        run: |
-          sed -i 's/<application/<application android:usesCleartextTraffic="true"/' mobile/android/app/src/main/AndroidManifest.xml || true
-
       - name: Gradlew Dosyasini Yetkilendir
         run: |
           chmod +x mobile/android/gradlew
 
-      - name: Android APK Derle (Release & Boyut Optimizasyonu)
+      - name: Android APK Derle (Release)
         run: |
           cd mobile/android
-          ./gradlew assembleRelease --no-daemon -PreactNativeArchitectures=arm64-v8a,armeabi-v7a || ./gradlew assembleDebug --no-daemon
+          ./gradlew assembleRelease --no-daemon -PreactNativeArchitectures=arm64-v8a,armeabi-v7a,x86,x86_64 || ./gradlew assembleDebug --no-daemon
 
       - name: APK Dosyasini Hazirla
         run: |

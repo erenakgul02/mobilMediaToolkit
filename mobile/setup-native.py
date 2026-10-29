@@ -1,6 +1,7 @@
 import os
 import sys
 import shutil
+import re
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ANDROID_DIR = os.path.join(BASE_DIR, "android")
@@ -22,7 +23,77 @@ def setup_native():
                 shutil.copy2(src_file, dst_file)
                 print(f"Copied {fname} -> {dst_file}")
 
-    # 2. Update app/build.gradle
+    # 2. Update gradle.properties
+    gradle_props = os.path.join(ANDROID_DIR, "gradle.properties")
+    if os.path.exists(gradle_props):
+        with open(gradle_props, "r", encoding="utf-8") as f:
+            props = f.read()
+
+        # Ensure legacy packaging is true
+        if "expo.useLegacyPackaging=" in props:
+            props = re.sub(r"expo\.useLegacyPackaging=.*", "expo.useLegacyPackaging=true", props)
+        else:
+            props += "\nexpo.useLegacyPackaging=true\n"
+
+        # Disable minification in release to prevent R8 from stripping native JNI bindings
+        if "android.enableMinifyInReleaseBuilds=" in props:
+            props = re.sub(r"android\.enableMinifyInReleaseBuilds=.*", "android.enableMinifyInReleaseBuilds=false", props)
+        else:
+            props += "\nandroid.enableMinifyInReleaseBuilds=false\n"
+
+        with open(gradle_props, "w", encoding="utf-8") as f:
+            f.write(props)
+        print("Updated gradle.properties (expo.useLegacyPackaging=true, minification=false)")
+
+    # 3. Update app/src/main/AndroidManifest.xml
+    manifest_path = os.path.join(ANDROID_DIR, "app", "src", "main", "AndroidManifest.xml")
+    if os.path.exists(manifest_path):
+        with open(manifest_path, "r", encoding="utf-8") as f:
+            manifest = f.read()
+
+        # Add extractNativeLibs, usesCleartextTraffic, requestLegacyExternalStorage to <application
+        app_tag_match = re.search(r"<application\b([^>]*)>", manifest)
+        if app_tag_match:
+            attrs = app_tag_match.group(1)
+            new_attrs = attrs
+            if 'android:extractNativeLibs=' not in new_attrs:
+                new_attrs += ' android:extractNativeLibs="true"'
+            else:
+                new_attrs = re.sub(r'android:extractNativeLibs="[^"]*"', 'android:extractNativeLibs="true"', new_attrs)
+
+            if 'android:usesCleartextTraffic=' not in new_attrs:
+                new_attrs += ' android:usesCleartextTraffic="true"'
+
+            if 'android:requestLegacyExternalStorage=' not in new_attrs:
+                new_attrs += ' android:requestLegacyExternalStorage="true"'
+
+            manifest = manifest[:app_tag_match.start(1)] + new_attrs + manifest[app_tag_match.end(1):]
+            with open(manifest_path, "w", encoding="utf-8") as f:
+                f.write(manifest)
+            print("Updated AndroidManifest.xml (<application extractNativeLibs=true usesCleartextTraffic=true>)")
+
+    # 4. Update app/proguard-rules.pro
+    proguard_path = os.path.join(ANDROID_DIR, "app", "proguard-rules.pro")
+    if os.path.exists(proguard_path):
+        with open(proguard_path, "r", encoding="utf-8") as f:
+            proguard = f.read()
+
+        keep_rules = """
+# youtubedl-android and ffmpeg keep rules
+-keep class com.yausername.** { *; }
+-keepclassmembers class com.yausername.** { *; }
+-keep class io.github.junkfood02.** { *; }
+-keepclassmembers class io.github.junkfood02.** { *; }
+-dontwarn com.yausername.**
+-dontwarn io.github.junkfood02.**
+"""
+        if "com.yausername" not in proguard:
+            proguard += keep_rules
+            with open(proguard_path, "w", encoding="utf-8") as f:
+                f.write(proguard)
+            print("Added youtubedl-android keep rules to proguard-rules.pro")
+
+    # 5. Update app/build.gradle
     build_gradle = os.path.join(ANDROID_DIR, "app", "build.gradle")
     if os.path.exists(build_gradle):
         with open(build_gradle, "r", encoding="utf-8") as f:
@@ -30,25 +101,43 @@ def setup_native():
 
         dep_line = """
     // Native on-device YouTube downloader engine (Seal / YTDLnis core)
-    implementation 'io.github.junkfood02.youtubedl-android:library:0.16.0'
-    implementation 'io.github.junkfood02.youtubedl-android:ffmpeg:0.16.0'
+    implementation 'io.github.junkfood02.youtubedl-android:library:0.18.1'
+    implementation 'io.github.junkfood02.youtubedl-android:ffmpeg:0.18.1'
 """
-        if "youtubedl-android" not in content:
+        # Replace old version if exists or add
+        if "youtubedl-android" in content:
+            content = re.sub(r"implementation ['\"]io\.github\.junkfood02\.youtubedl-android:library:[^'\"]*['\"]", "implementation 'io.github.junkfood02.youtubedl-android:library:0.18.1'", content)
+            content = re.sub(r"implementation ['\"]io\.github\.junkfood02\.youtubedl-android:ffmpeg:[^'\"]*['\"]", "implementation 'io.github.junkfood02.youtubedl-android:ffmpeg:0.18.1'", content)
+        else:
             if "dependencies {" in content:
                 content = content.replace("dependencies {", f"dependencies {{\n{dep_line}")
                 print("Added youtubedl-android dependencies to build.gradle")
 
-        # Ensure abiFilters for arm architectures
+        # Ensure abiFilters for all common architectures
         abi_line = """
         ndk {
-            abiFilters "arm64-v8a", "armeabi-v7a"
+            abiFilters "arm64-v8a", "armeabi-v7a", "x86", "x86_64"
         }
 """
-        if "abiFilters" not in content and "defaultConfig {" in content:
+        if "abiFilters" in content:
+            content = re.sub(r'abiFilters\s+["\'][^"\']*["\'](,\s*["\'][^"\']*["\'])*', 'abiFilters "arm64-v8a", "armeabi-v7a", "x86", "x86_64"', content)
+        elif "defaultConfig {" in content:
             content = content.replace("defaultConfig {", f"defaultConfig {{\n{abi_line}")
-            print("Added ARM abiFilters to build.gradle")
+            print("Added abiFilters to build.gradle")
 
-        # Allow cleartext HTTP and enable release signing using debug keystore
+        # Explicitly enforce useLegacyPackaging in packagingOptions
+        if "useLegacyPackaging" in content:
+            content = re.sub(r"useLegacyPackaging\s+.*", "useLegacyPackaging true", content)
+        elif "packagingOptions {" in content:
+            content = content.replace("packagingOptions {", "packagingOptions {\n        jniLibs {\n            useLegacyPackaging true\n        }")
+
+        # Disable minification in release build to prevent runtime crashes with JNI
+        if "minifyEnabled enableMinifyInReleaseBuilds" in content:
+            content = content.replace("minifyEnabled enableMinifyInReleaseBuilds", "minifyEnabled false")
+        if "shrinkResources enableShrinkResources.toBoolean()" in content:
+            content = content.replace("shrinkResources enableShrinkResources.toBoolean()", "shrinkResources false")
+
+        # Enable release signing using debug keystore
         if "signingConfig signingConfigs.release" in content:
             content = content.replace("signingConfig signingConfigs.release", "signingConfig signingConfigs.debug")
         elif "signingConfig signingConfigs.debug" not in content:
@@ -56,8 +145,9 @@ def setup_native():
 
         with open(build_gradle, "w", encoding="utf-8") as f:
             f.write(content)
+        print("Updated app/build.gradle")
 
-    # 3. Register package and initialize in MainApplication.kt
+    # 6. Register package and initialize in MainApplication.kt
     main_app_path = os.path.join(ANDROID_DIR, "app", "src", "main", "java", "com", "alierenakgul", "mobilmediatoolkit", "MainApplication.kt")
     if os.path.exists(main_app_path):
         with open(main_app_path, "r", encoding="utf-8") as f:
@@ -90,9 +180,13 @@ def setup_native():
             init_code = """
     try {
       YoutubeDL.getInstance().init(this)
-      FFmpeg.getInstance().init(this)
     } catch (e: Exception) {
       android.util.Log.e("MainApplication", "YoutubeDL init failed", e)
+    }
+    try {
+      FFmpeg.getInstance().init(this)
+    } catch (e: Exception) {
+      android.util.Log.e("MainApplication", "FFmpeg init failed", e)
     }
 """
             if "super.onCreate()" in app_code:

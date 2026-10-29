@@ -1,6 +1,7 @@
 package com.alierenakgul.mobilmediatoolkit.nativemodules
 
 import android.os.Environment
+import android.util.Log
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
@@ -18,6 +19,7 @@ import java.io.File
 class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
     ReactContextBaseJavaModule(reactContext) {
 
+    private val TAG = "YoutubeDLModule"
     private var isInitialized = false
 
     override fun getName(): String = "YoutubeDLNative"
@@ -27,15 +29,54 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
         promise.resolve(true)
     }
 
+    @Synchronized
     private fun ensureInit() {
         if (!isInitialized) {
             try {
+                Log.d(TAG, "YoutubeDL başlatılıyor...")
                 YoutubeDL.getInstance().init(reactContext.applicationContext)
-                FFmpeg.getInstance().init(reactContext.applicationContext)
                 isInitialized = true
+                Log.d(TAG, "YoutubeDL başarıyla başlatıldı.")
             } catch (e: Exception) {
-                isInitialized = true
+                val msg = e.localizedMessage ?: e.message ?: "Bilinmeyen hata"
+                Log.e(TAG, "YoutubeDL init hatası: $msg", e)
+                if (msg.contains("already initialized", ignoreCase = true)) {
+                    isInitialized = true
+                } else {
+                    throw RuntimeException("Motor başlatılamadı: $msg", e)
+                }
             }
+
+            try {
+                Log.d(TAG, "FFmpeg başlatılıyor...")
+                FFmpeg.getInstance().init(reactContext.applicationContext)
+                Log.d(TAG, "FFmpeg başarıyla başlatıldı.")
+            } catch (fe: Exception) {
+                Log.w(TAG, "FFmpeg init uyarısı (isteğe bağlı): ${fe.localizedMessage}")
+            }
+        }
+    }
+
+    private fun getStorageDir(): File {
+        return try {
+            val publicDir = File(
+                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+                "MediaToolkit"
+            )
+            if (publicDir.exists() || publicDir.mkdirs()) {
+                publicDir
+            } else {
+                val appDir = File(
+                    reactContext.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: reactContext.filesDir,
+                    "MediaToolkit"
+                )
+                if (!appDir.exists()) appDir.mkdirs()
+                appDir
+            }
+        } catch (e: Exception) {
+            val fallback = File(reactContext.filesDir, "MediaToolkit")
+            if (!fallback.exists()) fallback.mkdirs()
+            fallback
         }
     }
 
@@ -46,7 +87,7 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
                 ensureInit()
                 promise.resolve(true)
             } catch (e: Exception) {
-                promise.reject("INIT_ERROR", e.localizedMessage, e)
+                promise.reject("INIT_ERROR", e.localizedMessage ?: e.message ?: "Başlatma başarısız", e)
             }
         }
     }
@@ -70,7 +111,8 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
                 }
                 promise.resolve(map)
             } catch (e: Exception) {
-                promise.reject("INFO_ERROR", e.localizedMessage, e)
+                Log.e(TAG, "getVideoInfo hatası", e)
+                promise.reject("INFO_ERROR", e.localizedMessage ?: e.message ?: "Bilgi alınamadı", e)
             }
         }
     }
@@ -81,13 +123,7 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
             try {
                 ensureInit()
 
-                val downloadDir = File(
-                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
-                    "MediaToolkit"
-                )
-                if (!downloadDir.exists()) {
-                    downloadDir.mkdirs()
-                }
+                val downloadDir = getStorageDir()
 
                 val request = YoutubeDLRequest(url)
                 val isMp3 = format.equals("mp3", ignoreCase = true)
@@ -110,21 +146,27 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
                     val eventMap = Arguments.createMap().apply {
                         putDouble("progress", progress.toDouble())
                         putDouble("eta", etaInSeconds.toDouble())
-                        putString("line", line)
+                        putString("line", line ?: "")
                     }
                     reactContext
                         .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
                         .emit("onNativeDownloadProgress", eventMap)
                 }
 
+                val files = downloadDir.listFiles()
+                val latestFile = files?.maxByOrNull { it.lastModified() }
+
                 val resultMap = Arguments.createMap().apply {
                     putBoolean("success", true)
                     putString("outputDir", downloadDir.absolutePath)
-                    putString("log", response.out)
+                    putString("filePath", latestFile?.absolutePath ?: "")
+                    putString("fileName", latestFile?.name ?: "")
+                    putString("log", response.out ?: "")
                 }
                 promise.resolve(resultMap)
             } catch (e: Exception) {
-                promise.reject("DOWNLOAD_ERROR", e.localizedMessage, e)
+                Log.e(TAG, "Download hatası", e)
+                promise.reject("DOWNLOAD_ERROR", e.localizedMessage ?: e.message ?: "İndirme başarısız oldu", e)
             }
         }
     }
