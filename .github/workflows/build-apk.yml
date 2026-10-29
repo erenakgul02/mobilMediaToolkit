@@ -64,6 +64,9 @@ jobs:
           tag_name: v1.0.0
           name: "Mobil Media Toolkit v1.0.0"
           body: "Android cihazlar icin dogrudan yuklenebilir hazir APK dosyasidir."
+          draft: false
+          prerelease: false
+          make_latest: true
           files: mobilMediaToolkit.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
