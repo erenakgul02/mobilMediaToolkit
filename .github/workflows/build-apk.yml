@@ -38,6 +38,10 @@ jobs:
           cd mobile
           npx expo prebuild --platform android --no-install
 
+      - name: HTTP Cleartext Trafik Yetkisi Ekle
+        run: |
+          sed -i 's/<application/<application android:usesCleartextTraffic="true"/' mobile/android/app/src/main/AndroidManifest.xml || true
+
       - name: Gradlew Dosyasini Yetkilendir
         run: |
           chmod +x mobile/android/gradlew

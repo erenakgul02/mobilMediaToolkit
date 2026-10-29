@@ -18,6 +18,7 @@
     "android": {
       "package": "com.alierenakgul.mobilmediatoolkit",
       "versionCode": 1,
+      "usesCleartextTraffic": true,
       "adaptiveIcon": {
         "backgroundColor": "#FFFFFF",
         "foregroundImage": "./assets/android-icon-foreground.png"
