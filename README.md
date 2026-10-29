@@ -1,71 +1,69 @@
-# 📱 Mobil Media Toolkit
+# Mobil Media Toolkit
 
-> **YouTube Medya İndirici (MP3 & MP4)** — Modern, hızlı ve cihazınıza özel YouTube ses ve video indirme uygulaması.
+YouTube videolarını mobil cihazlar için MP3 ve MP4 formatında indirmeye yarayan açık kaynaklı bir mobil uygulama projesidir.
 
----
+## Genel Bakış
 
-## ✨ Özellikler
+Bu uygulama React Native (Expo) tabanlı bir mobil arayüz ile arka planda çalışan Python (yt-dlp ve FFmpeg) servisinden oluşur.
 
-- 🎵 **MP3 Stüdyo Kalitesi (320 kbps):** YouTube videolarını ve müziklerini kayıpsız, yüksek kaliteli sese dönüştürür.
-- 🎬 **MP4 Video (1080p / 720p):** FFmpeg motoru ile yüksek çözünürlüklü video ve ses akışlarını tek bir dosyada birleştirir.
-- 🎨 **Lila & Pembe Modern Tema:** Gece modu tabanlı, zarif ve mobil ergonomisine uygun arayüz.
-- 🔒 **%100 Cihaza Özel Gizlilik:** İndirme geçmişi sunucuda değil, yalnızca sizin telefonunuzun dahili hafızasında (`AsyncStorage`) saklanır. Kimse başkasının indirdiği medyayı göremez.
-- ⚡ **Otomatik APK Üretimi:** GitHub Actions altyapısı sayesinde depoya her güncelleme geldiğinde indirilebilir Android `.apk` dosyası otomatik olarak derlenir.
+- MP3 (ses) ve MP4 (video) formatlarında indirme yapılabilir.
+- 320 kbps ses ve 1080p / 720p video kaliteleri desteklenir.
+- İndirilen dosyaların geçmişi sunucuda tutulmaz, gizlilik amacıyla doğrudan kullanıcının kendi cihazında (AsyncStorage) saklanır.
+- Kod tabanı, GitHub Actions üzerinden doğrudan kurulabilir Android APK çıktısı üretecek şekilde yapılandırılmıştır.
 
----
+## Kurulum ve Çalıştırma
 
-## 📥 Android APK Olarak İndirme ve Kurma
+Projeyi yerel ortamda çalıştırmak için aşağıdaki adımları izleyebilirsiniz.
 
-1. GitHub sayfasında sağ taraftaki **Releases** (veya **Actions -> Artifacts**) bölümüne gidin.
-2. **`MediaToolkit-Android-APK`** dosyasını telefonunuza indirin.
-3. İndirilen `.apk` dosyasına dokunarak telefonunuza kurun.
-4. Ana ekranınıza eklenen mor/lila simgeye dokunarak uygulamayı doğrudan başlatın!
+### 1. Arka Uç Servisi (Python)
 
----
+Gerekli Python paketlerini yükleyin ve sunucuyu başlatın:
 
-## 🚀 Proje Yapısı
-
-```
-mobilMediaToolkit/
-├── .github/workflows/
-│   └── build-apk.yml       # GitHub Actions otomatik Android APK derleme hattı
-├── backend/
-│   ├── app.py              # Flask + yt-dlp + FFmpeg indirme ve dönüştürme API'si
-│   ├── Dockerfile          # 7/24 ücretsiz bulut dağıtım yapılandırması
-│   ├── render.yaml         # Render.com tek tıkla dağıtım manifesti
-│   └── requirements.txt    # Python bağımlılıkları
-├── mobile/
-│   ├── App.js              # React Native ana ekranı & navigasyon
-│   ├── app.json            # Android paket ve simge yapılandırması
-│   ├── eas.json            # Expo EAS Cloud Build ayarları
-│   ├── assets/             # Uygulama simgeleri (adaptive-icon, favicon, logo)
-│   └── src/
-│       ├── components/     # İndirici ve Geçmiş ekranları
-│       └── services/       # Yerel hafıza ve indirme istemcisi
-└── launcher.ps1            # Masaüstü yerel başlatıcı
-```
-
----
-
-## 🛠️ Yerel Geliştirici Kurulumu
-
-### 1. Backend (Python):
 ```bash
 cd backend
 pip install -r requirements.txt
 python app.py
 ```
 
-### 2. Frontend (React Native / Expo):
+Sunucu varsayılan olarak `http://localhost:5000` portunda çalışır.
+
+### 2. Mobil Uygulama (React Native)
+
+Bağımlılıkları kurun ve geliştirici sunucusunu açın:
+
 ```bash
 cd mobile
 npm install
-npm run android   # Android geliştirme
-npm run web       # Web önizleme
+npm run android
 ```
 
----
+Tarayıcı üzerinden önizleme yapmak için:
 
-## 📄 Lisans
+```bash
+npm run web
+```
 
-MIT License — İstediğiniz gibi özelleştirebilir ve kullanabilirsiniz.
+## Android APK Derleme
+
+Uygulamanın Android APK dosyası depoya dahil edilen GitHub Actions iş akışı ile derlenir:
+
+1. Deponun **Actions** sekmesine gidin.
+2. **Android APK Derleme ve Yayinlama** iş akışını seçin.
+3. Derleme tamamlandığında sayfanın altındaki **Artifacts** bölümünden `MediaToolkit-Android-APK` dosyasını indirip doğrudan telefonunuza kurabilirsiniz.
+
+Alternatif olarak Expo EAS Build kullanmak için:
+
+```bash
+cd mobile
+npx eas build -p android --profile preview
+```
+
+## Dizin Yapısı
+
+- `backend/`: Flask, yt-dlp ve FFmpeg içeren dönüştürme ve indirme servisi.
+- `mobile/`: React Native mobil kullanıcı arayüzü ve ekran bileşenleri.
+- `.github/workflows/`: Otomatik Android APK derleme yapılandırması.
+
+## Lisans
+
+Bu proje MIT lisansı ile dağıtılmaktadır.
