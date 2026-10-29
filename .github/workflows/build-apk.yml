@@ -42,20 +42,26 @@ jobs:
         run: |
           chmod +x mobile/android/gradlew
 
-      - name: Android APK Derle (assembleDebug)
+      - name: Android APK Derle (Release & Boyut Optimizasyonu)
         run: |
           cd mobile/android
-          ./gradlew assembleDebug --no-daemon
+          ./gradlew assembleRelease --no-daemon -PreactNativeArchitectures=arm64-v8a,armeabi-v7a || ./gradlew assembleDebug --no-daemon
+
+      - name: APK Dosyasini Hazirla
+        run: |
+          if [ -f mobile/android/app/build/outputs/apk/release/app-release.apk ]; then
+            cp mobile/android/app/build/outputs/apk/release/app-release.apk mobilMediaToolkit.apk
+          elif [ -f mobile/android/app/build/outputs/apk/release/*.apk ]; then
+            cp mobile/android/app/build/outputs/apk/release/*.apk mobilMediaToolkit.apk
+          else
+            cp mobile/android/app/build/outputs/apk/debug/app-debug.apk mobilMediaToolkit.apk
+          fi
 
       - name: APK Dosyasini Yukle (Artifacts)
         uses: actions/upload-artifact@v4
         with:
           name: MediaToolkit-APK
-          path: mobile/android/app/build/outputs/apk/debug/*.apk
-
-      - name: APK Dosyasini Hazirla
-        run: |
-          cp mobile/android/app/build/outputs/apk/debug/app-debug.apk mobilMediaToolkit.apk
+          path: mobilMediaToolkit.apk
 
       - name: GitHub Releases Uzerinde Yayinla
         uses: softprops/action-gh-release@v2
@@ -63,7 +69,7 @@ jobs:
         with:
           tag_name: v1.0.0
           name: "Mobil Media Toolkit v1.0.0"
-          body: "Android cihazlar icin dogrudan yuklenebilir hazir APK dosyasidir."
+          body: "Android cihazlar icin optimize edilmis, dogrudan yuklenebilir kucuk boyutlu APK dosyasidir."
           draft: false
           prerelease: false
           make_latest: true
