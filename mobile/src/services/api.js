@@ -179,8 +179,9 @@ export async function startDownload({ url, type, quality, title, thumbnail }) {
           createdAt: new Date().toISOString(),
         });
       } catch (err) {
+        console.error('Native download error:', err);
         nativeTasks[taskId].status = 'failed';
-        nativeTasks[taskId].error = err.message || 'Yerel indirme başarısız oldu.';
+        nativeTasks[taskId].error = (err && (err.message || err.toString())) || 'Yerel indirme başarısız oldu.';
       }
     })();
 
