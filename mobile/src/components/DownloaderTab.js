@@ -169,7 +169,7 @@ export default function DownloaderTab({ onSwitchToHistory }) {
                 type: taskData.type,
                 quality: taskData.quality,
                 filesize: taskData.filesize,
-                download_url: `/api/files/${taskData.id}`,
+                download_url: `/api/download-direct/${taskData.filename}`,
                 date: 'Bugün',
               });
             }
@@ -191,9 +191,7 @@ export default function DownloaderTab({ onSwitchToHistory }) {
     if (!activeTask || !activeTask.filename) return;
     setSavingToDevice(true);
     try {
-      const relUrl = activeTask.id
-        ? `/api/files/${activeTask.id}`
-        : `/api/download-direct/${encodeURIComponent(activeTask.filename)}`;
+      const relUrl = `/api/download-direct/${activeTask.filename}`;
       await downloadFileToDevice(relUrl, activeTask.filename);
       if (Platform.OS !== 'web') {
         Alert.alert('Başarılı', 'Dosya cihazınıza kaydedildi / paylaşıldı!');

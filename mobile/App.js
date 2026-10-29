@@ -22,7 +22,7 @@ export default function App() {
     <SafeAreaView style={styles.safeContainer}>
       <StatusBar style="dark" />
 
-      {/* Ust Baslik Cubugu */}
+      {/* Üst Başlık Çubuğu */}
       <View style={styles.topHeader}>
         <View style={styles.logoRow}>
           <View style={styles.logoBadge}>
@@ -41,7 +41,7 @@ export default function App() {
         </View>
       </View>
 
-      {/* Ana Govde */}
+      {/* Ana Gövde (Aktif Ekran) */}
       <View style={styles.tabContentArea}>
         {activeTab === 'downloader' ? (
           <DownloaderTab
@@ -54,7 +54,7 @@ export default function App() {
         )}
       </View>
 
-      {/* Alt Navigasyon Cubugu */}
+      {/* Alt Navigasyon Çubuğu */}
       <View style={styles.bottomNav}>
         <TouchableOpacity
           style={[

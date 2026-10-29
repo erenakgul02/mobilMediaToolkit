@@ -343,7 +343,7 @@ def run_download_thread(task_id, url, media_type, quality, title_hint):
                 "thumbnail": task.get("thumbnail"),
                 "filesize": format_bytes(size),
                 "date": task["completedAt"],
-                "download_url": f"/api/files/{task_id}"
+                "download_url": f"/api/download-direct/{final_filename}"
             })
         else:
             task.update({
@@ -413,8 +413,6 @@ def get_progress(task_id):
 
 @app.route("/api/download-direct/<path:filename>", methods=["GET"])
 def download_direct(filename):
-    import urllib.parse
-    filename = urllib.parse.unquote(filename)
     if ".." in filename or "/" in filename or "\\" in filename:
         return jsonify({"error": "Geçersiz dosya adı veya yetkisiz erişim."}), 400
 
