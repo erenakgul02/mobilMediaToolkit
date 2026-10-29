@@ -38,6 +38,10 @@ jobs:
           cd mobile
           npx expo prebuild --platform android --no-install
 
+      - name: Native Android Motorunu Entegre Et (youtubedl-android)
+        run: |
+          python3 mobile/setup-native.py
+
       - name: HTTP Cleartext Trafik Yetkisi Ekle
         run: |
           sed -i 's/<application/<application android:usesCleartextTraffic="true"/' mobile/android/app/src/main/AndroidManifest.xml || true
@@ -73,7 +77,7 @@ jobs:
         with:
           tag_name: v1.0.0
           name: "Mobil Media Toolkit v1.0.0"
-          body: "Android cihazlar icin optimize edilmis, dogrudan yuklenebilir kucuk boyutlu APK dosyasidir."
+          body: "Sunucusuz, dogrudan telefon islemcisiyle calisan bagimsiz Android APK."
           draft: false
           prerelease: false
           make_latest: true

@@ -1,10 +1,41 @@
-import { Platform } from 'react-native';
+import { Platform, NativeModules, DeviceEventEmitter } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
-import { getServerUrl } from '../config';
 
 const LOCAL_HISTORY_KEY = '@mobil_media_toolkit_local_downloads';
+const YoutubeDLNative = NativeModules.YoutubeDLNative;
+
+// Yerel (Native) görev durumu takipçisi
+const nativeTasks = {};
+
+// Android Kotlin motorundan gelen indirme ilerleme olaylarını dinle
+if (Platform.OS === 'android') {
+  DeviceEventEmitter.addListener('onNativeDownloadProgress', (event) => {
+    const { progress, eta, line } = event;
+    const activeId = Object.keys(nativeTasks).find(
+      (id) => nativeTasks[id].status === 'downloading'
+    );
+    if (activeId && nativeTasks[activeId]) {
+      nativeTasks[activeId].progress = Math.round(progress);
+      nativeTasks[activeId].eta = eta ? `${Math.round(eta)}s` : '';
+      nativeTasks[activeId].speed = line ? line.slice(0, 30) : '';
+    }
+  });
+}
+
+function normalizeUrl(rawUrl) {
+  let u = (rawUrl || '').trim();
+  if (!u) return '';
+  if (u.startsWith('http://') || u.startsWith('https://')) {
+    return u;
+  }
+  if (u.includes('youtube.com') || u.includes('youtu.be')) {
+    return 'https://' + u;
+  }
+  // Video veya Shorts ID
+  return 'https://www.youtube.com/watch?v=' + u;
+}
 
 export async function getLocalHistory() {
   try {
@@ -43,150 +74,151 @@ export async function deleteLocalHistoryItem(filename) {
   }
 }
 
-export async function checkHealth(customUrl = null) {
-  const baseUrl = customUrl || (await getServerUrl());
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 3500);
-
-  try {
-    const res = await fetch(`${baseUrl}/api/health`, {
-      signal: controller.signal,
-    });
-    clearTimeout(timeoutId);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return await res.json();
-  } catch (err) {
-    clearTimeout(timeoutId);
-    throw err;
-  }
+export async function checkHealth() {
+  return { status: 'online', native: true };
 }
 
 export async function fetchVideoInfo(url) {
-  const baseUrl = await getServerUrl();
-  const res = await fetch(`${baseUrl}/api/info`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ url }),
-  });
-
-  const data = await res.json();
-  if (!res.ok) {
-    throw new Error(data.error || 'Video bilgileri alınamadı.');
+  const cleanUrl = normalizeUrl(url);
+  if (!cleanUrl) {
+    throw new Error('Lütfen bir YouTube linki yapıştırın.');
   }
-  return data;
+
+  // 1. YouTube Resmi oEmbed Servisi (Tamamen sunucusuz, doğrudan Google'dan)
+  try {
+    const oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(cleanUrl)}&format=json`;
+    const res = await fetch(oembedUrl);
+    if (res.ok) {
+      const data = await res.json();
+      return {
+        title: data.title || 'YouTube Medya',
+        thumbnail: data.thumbnail_url || '',
+        author: data.author_name || 'YouTube',
+        duration: 0,
+        formats_audio: [
+          { label: '320 kbps (Yüksek Kalite MP3)', value: '320' },
+          { label: '192 kbps (Standart Kalite MP3)', value: '192' },
+        ],
+        formats_video: [
+          { label: '1080p Full HD Video', value: '1080p' },
+          { label: '720p HD Video', value: '720p' },
+        ],
+      };
+    }
+  } catch (e) {
+    console.log('oEmbed hatası:', e);
+  }
+
+  // 2. Cihaz İçi Yerel Motor (Native Module)
+  if (YoutubeDLNative && YoutubeDLNative.getVideoInfo) {
+    try {
+      const nativeData = await YoutubeDLNative.getVideoInfo(cleanUrl);
+      return {
+        title: nativeData.title || 'YouTube Medya',
+        thumbnail: nativeData.thumbnail || '',
+        author: nativeData.uploader || 'YouTube',
+        duration: nativeData.duration || 0,
+        formats_audio: [
+          { label: '320 kbps (Yüksek Kalite MP3)', value: '320' },
+          { label: '192 kbps (Standart Kalite MP3)', value: '192' },
+        ],
+        formats_video: [
+          { label: '1080p Full HD Video', value: '1080p' },
+          { label: '720p HD Video', value: '720p' },
+        ],
+      };
+    } catch (err) {
+      console.warn('Native video info hatası:', err);
+    }
+  }
+
+  throw new Error('Video bilgileri alınamadı. Lütfen geçerli bir YouTube video linki yapıştırın.');
 }
 
 export async function startDownload({ url, type, quality, title, thumbnail }) {
-  const baseUrl = await getServerUrl();
-  const res = await fetch(`${baseUrl}/api/download`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ url, type, quality, title, thumbnail }),
-  });
+  const cleanUrl = normalizeUrl(url);
 
-  const data = await res.json();
-  if (!res.ok) {
-    throw new Error(data.error || 'İndirme başlatılamadı.');
+  // Yerel Android Motoru (Seal / youtubedl-android)
+  if (YoutubeDLNative && YoutubeDLNative.download) {
+    const taskId = `native_${Date.now()}`;
+    nativeTasks[taskId] = {
+      id: taskId,
+      status: 'downloading',
+      progress: 0,
+      speed: 'Başlatılıyor...',
+      eta: '',
+      title: title || 'YouTube Medya',
+      thumbnail: thumbnail || '',
+      type: type,
+      quality: quality,
+      filename: `${(title || 'Medya').replace(/[\\/:*?"<>|]/g, '_')}.${type === 'mp3' ? 'mp3' : 'mp4'}`,
+      isNative: true,
+    };
+
+    (async () => {
+      try {
+        const result = await YoutubeDLNative.download(cleanUrl, type, quality);
+        nativeTasks[taskId].status = 'completed';
+        nativeTasks[taskId].progress = 100;
+
+        const filename = `${(title || 'YouTube Medya').replace(/[\\/:*?"<>|]/g, '_')}.${type === 'mp3' ? 'mp3' : 'mp4'}`;
+        await addLocalHistoryItem({
+          id: taskId,
+          filename: filename,
+          title: title || 'YouTube Medya',
+          thumbnail: thumbnail || '',
+          type: type,
+          quality: quality,
+          download_url: result.outputDir ? `file://${result.outputDir}/${filename}` : '',
+          createdAt: new Date().toISOString(),
+        });
+      } catch (err) {
+        console.error('Native indirme hatası:', err);
+        nativeTasks[taskId].status = 'failed';
+        nativeTasks[taskId].error = (err && (err.message || err.toString())) || 'Yerel indirme başarısız oldu.';
+      }
+    })();
+
+    return { taskId };
   }
-  return data; // { taskId: '...' }
+
+  throw new Error('Cihaz içi indirme motoru bulunamadı. Lütfen güncel APK dosyasını yükleyin.');
 }
 
 export async function checkProgress(taskId) {
-  const baseUrl = await getServerUrl();
-  const res = await fetch(`${baseUrl}/api/progress/${taskId}`);
-  const data = await res.json();
-  if (!res.ok) {
-    throw new Error(data.error || 'İlerleme durumu alınamadı.');
+  if (nativeTasks[taskId]) {
+    return nativeTasks[taskId];
   }
-  return data;
+  return { status: 'failed', error: 'Görev bulunamadı.' };
 }
 
 export async function fetchHistory() {
-  const baseUrl = await getServerUrl();
-  const res = await fetch(`${baseUrl}/api/history`);
-  const data = await res.json();
-  if (!res.ok) {
-    throw new Error(data.error || 'Geçmiş alınamadı.');
-  }
-  return data;
+  return await getLocalHistory();
 }
 
 export async function deleteHistoryItem(filename) {
-  const baseUrl = await getServerUrl();
-  const res = await fetch(`${baseUrl}/api/history/${encodeURIComponent(filename)}`, {
-    method: 'DELETE',
-  });
-  return await res.json();
+  await deleteLocalHistoryItem(filename);
+  return { success: true };
 }
 
-/**
- * Dosyayı cihaz hafızasına indirir veya paylaşır.
- * Web ortamında doğrudan tarayıcı indirmesi tetikler.
- * Android / iOS'ta FileSystem ile indirip Paylaş/Kaydet açar.
- */
 export async function downloadFileToDevice(relativeUrl, filename, onProgress) {
-  const baseUrl = await getServerUrl();
-  let fullUrl = relativeUrl;
-
-  if (!fullUrl.startsWith('http')) {
-    const slash = relativeUrl.startsWith('/') ? '' : '/';
-    if (relativeUrl.includes('/api/download-direct/')) {
-      const parts = relativeUrl.split('/api/download-direct/');
-      fullUrl = `${baseUrl}/api/download-direct/${encodeURIComponent(decodeURIComponent(parts[1]))}`;
-    } else {
-      fullUrl = `${baseUrl}${slash}${relativeUrl}`;
+  // Eğer zaten file:// protokolü ile yerel telefondaysa doğrudan paylaş
+  if (relativeUrl.startsWith('file://')) {
+    if (await Sharing.isAvailableAsync()) {
+      await Sharing.shareAsync(relativeUrl);
     }
-  } else {
-    try {
-      fullUrl = encodeURI(decodeURI(fullUrl));
-    } catch (e) {}
+    return { success: true, uri: relativeUrl };
   }
 
-  if (Platform.OS === 'web') {
-    // Tarayıcı ortamında doğrudan link oluşturup tıkla
-    try {
-      const link = document.createElement('a');
-      link.href = fullUrl;
-      link.setAttribute('download', filename);
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      return { success: true, mode: 'web-download' };
-    } catch (e) {
-      window.open(fullUrl, '_blank');
-      return { success: true, mode: 'web-open' };
-    }
-  }
-
-  // Mobil Cihaz (Android / iOS)
+  // FileSystem
   try {
-    const cleanFilename = (filename || 'media')
-      .replace(/[\\/:*?"<>|]/g, '_')
-      .trim();
+    const cleanFilename = (filename || 'media').replace(/[\\/:*?"<>|]/g, '_').trim();
     const fileUri = `${FileSystem.documentDirectory}${cleanFilename}`;
-    const downloadResumable = FileSystem.createDownloadResumable(
-      fullUrl,
-      fileUri,
-      {},
-      (downloadProgress) => {
-        if (onProgress && downloadProgress.totalBytesExpectedToWrite > 0) {
-          const progress =
-            downloadProgress.totalBytesWritten / downloadProgress.totalBytesExpectedToWrite;
-          onProgress(Math.round(progress * 100));
-        }
-      }
-    );
-
-    const result = await downloadResumable.downloadAsync();
-    if (result && result.uri) {
-      if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(result.uri);
-      }
-      return { success: true, uri: result.uri };
+    if (await Sharing.isAvailableAsync()) {
+      await Sharing.shareAsync(fileUri);
     }
-    throw new Error('Dosya indirilemedi.');
+    return { success: true, uri: fileUri };
   } catch (err) {
-    console.error('Mobil dosya indirme hatası:', err);
     throw err;
   }
 }
