@@ -106,19 +106,43 @@ def setup_native():
 
             manifest = manifest[:app_tag_match.start(1)] + new_attrs + manifest[app_tag_match.end(1):]
 
-        # Register MusicPlayerService for background audio & lockscreen/notification controls
+        # Create res/xml/mediatoolkit_file_paths.xml so FileProvider can access Download/MediaToolkit
+        xml_dir = os.path.join(ANDROID_DIR, "app", "src", "main", "res", "xml")
+        os.makedirs(xml_dir, exist_ok=True)
+        file_paths_xml = os.path.join(xml_dir, "mediatoolkit_file_paths.xml")
+        with open(file_paths_xml, "w", encoding="utf-8") as xf:
+            xf.write("""<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <external-path name="external_files" path="." />
+    <external-files-path name="app_external_files" path="." />
+    <files-path name="internal_files" path="." />
+    <cache-path name="cache_files" path="." />
+    <root-path name="root" path="." />
+</paths>
+""")
+
+        # Register MusicPlayerService and unrestricted MediaToolkit FileProvider
         service_decl = """    <service
       android:name=".nativemodules.MusicPlayerService"
       android:enabled="true"
       android:exported="false"
       android:foregroundServiceType="mediaPlayback" />
+    <provider
+      android:name="androidx.core.content.FileProvider"
+      android:authorities="${applicationId}.mediatoolkit.provider"
+      android:exported="false"
+      android:grantUriPermissions="true">
+      <meta-data
+        android:name="android.support.FILE_PROVIDER_PATHS"
+        android:resource="@xml/mediatoolkit_file_paths" />
+    </provider>
   </application>"""
         if "MusicPlayerService" not in manifest and "</application>" in manifest:
             manifest = manifest.replace("</application>", service_decl, 1)
 
         with open(manifest_path, "w", encoding="utf-8") as f:
             f.write(manifest)
-        print("Updated AndroidManifest.xml (permissions + MusicPlayerService)")
+        print("Updated AndroidManifest.xml (permissions + MusicPlayerService + FileProvider)")
 
     # 5. Update app/proguard-rules.pro
     proguard_path = os.path.join(ANDROID_DIR, "app", "proguard-rules.pro")

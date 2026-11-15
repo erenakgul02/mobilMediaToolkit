@@ -8,6 +8,14 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.BitmapShader
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Matrix
+import android.graphics.Paint
+import android.graphics.Shader
 import android.media.AudioAttributes
 import android.media.MediaMetadata
 import android.media.MediaPlayer
@@ -19,10 +27,15 @@ import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
 import android.util.Log
+import android.util.LruCache
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.modules.core.DeviceEventManagerModule
 import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
+import java.util.concurrent.Executors
+import kotlin.math.min
 
 data class PlaylistTrack(
     val id: String,
@@ -30,6 +43,7 @@ data class PlaylistTrack(
     val uploader: String,
     val filePath: String,
     val filename: String,
+    val thumbnail: String = "",
     val durationSec: Int = 0
 )
 
@@ -56,6 +70,9 @@ class MusicPlayerService : Service() {
         private var isPlayingState: Boolean = false
         private var currentPositionMs: Int = 0
         private var currentDurationMs: Int = 0
+
+        private val bitmapCache = object : LruCache<String, Bitmap>(16) {}
+        private val artExecutor = Executors.newSingleThreadExecutor()
 
         @Synchronized
         fun startPlayback(context: Context, tracks: List<PlaylistTrack>, startIndex: Int) {
@@ -89,6 +106,13 @@ class MusicPlayerService : Service() {
             }
         }
 
+        fun pauseIfPlaying() {
+            val svc = instance ?: return
+            if (isPlayingState) {
+                svc.handleAction(ACTION_PLAY_PAUSE)
+            }
+        }
+
         fun seekToPosition(posMs: Int) {
             instance?.seekToInternal(posMs)
         }
@@ -107,6 +131,7 @@ class MusicPlayerService : Service() {
                 putString("uploader", track.uploader)
                 putString("filename", track.filename)
                 putString("filePath", track.filePath)
+                putString("thumbnail", track.thumbnail)
             }
         }
 
@@ -119,11 +144,81 @@ class MusicPlayerService : Service() {
             } catch (_: Exception) {
             }
         }
+
+        /**
+         * Video kapak resmini şık bir "Plak (Vinyl Record)" tasarımına dönüştürür.
+         * Bildirim çubuğunda her şarkı geçişinde yalnızca 1 kez üretilip önbelleğe alındığı için
+         * telefonun işlemcisini veya pilini kesinlikle yormaz (%0 arka plan CPU kullanımı).
+         */
+        fun createVinylRecordBitmap(source: Bitmap?): Bitmap {
+            val size = 320
+            val center = size / 2f
+            val outerRadius = size / 2f - 4f
+            val output = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(output)
+            val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+            // 1. Dış Siyah Plak Gövdesi
+            paint.style = Paint.Style.FILL
+            paint.color = Color.parseColor("#111827")
+            canvas.drawCircle(center, center, outerRadius, paint)
+
+            // 2. İnce Plak İzleri (Grooves)
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = 1.5f
+            paint.color = Color.parseColor("#1F2937")
+            canvas.drawCircle(center, center, outerRadius - 10f, paint)
+            canvas.drawCircle(center, center, outerRadius - 20f, paint)
+            paint.color = Color.parseColor("#374151")
+            canvas.drawCircle(center, center, outerRadius - 28f, paint)
+
+            // 3. İç Kapak Resmi (Yuvarlak Kesim - Plak Etiketi)
+            val coverRadius = outerRadius * 0.72f
+            if (source != null && !source.isRecycled) {
+                val shader = BitmapShader(source, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
+                val matrix = Matrix()
+                val minDim = min(source.width, source.height).toFloat().coerceAtLeast(1f)
+                val scale = (coverRadius * 2f) / minDim
+                matrix.setScale(scale, scale)
+                matrix.postTranslate(
+                    center - (source.width * scale) / 2f,
+                    center - (source.height * scale) / 2f
+                )
+                shader.setLocalMatrix(matrix)
+
+                val coverPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    this.shader = shader
+                    style = Paint.Style.FILL
+                }
+                canvas.drawCircle(center, center, coverRadius, coverPaint)
+            } else {
+                paint.style = Paint.Style.FILL
+                paint.color = Color.parseColor("#4F46E5")
+                canvas.drawCircle(center, center, coverRadius, paint)
+            }
+
+            // 4. Kapak Etrafı İnce Mor/İndigo Halka
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = 3f
+            paint.color = Color.parseColor("#6366F1")
+            canvas.drawCircle(center, center, coverRadius, paint)
+
+            // 5. Plak Merkez Göbek Halkası ve Deliği
+            paint.style = Paint.Style.FILL
+            paint.color = Color.parseColor("#111827")
+            canvas.drawCircle(center, center, 22f, paint)
+
+            paint.color = Color.parseColor("#E5E7EB")
+            canvas.drawCircle(center, center, 9f, paint)
+
+            return output
+        }
     }
 
     private var mediaPlayer: MediaPlayer? = null
     private var mediaSession: MediaSession? = null
     private val mainHandler = Handler(Looper.getMainLooper())
+    private var currentVinylBitmap: Bitmap? = null
 
     private val progressRunnable = object : Runnable {
         override fun run() {
@@ -246,6 +341,57 @@ class MusicPlayerService : Service() {
         }
     }
 
+    private fun loadVinylArtworkForTrack(track: PlaylistTrack) {
+        val thumbUrl = track.thumbnail.trim()
+        if (thumbUrl.isEmpty()) {
+            val fallbackVinyl = bitmapCache.get("__default_vinyl__")
+                ?: createVinylRecordBitmap(null).also { bitmapCache.put("__default_vinyl__", it) }
+            currentVinylBitmap = fallbackVinyl
+            updateMediaSessionMetadata(track, currentDurationMs.toLong(), fallbackVinyl)
+            startOrUpdateForegroundNotification(track)
+            return
+        }
+
+        val cached = bitmapCache.get(thumbUrl)
+        if (cached != null) {
+            currentVinylBitmap = cached
+            updateMediaSessionMetadata(track, currentDurationMs.toLong(), cached)
+            startOrUpdateForegroundNotification(track)
+            return
+        }
+
+        // Önce varsayılan plak görselini hazırla, ardından kapak resmini arka planda indirip güncelle
+        val defaultVinyl = bitmapCache.get("__default_vinyl__")
+            ?: createVinylRecordBitmap(null).also { bitmapCache.put("__default_vinyl__", it) }
+        currentVinylBitmap = defaultVinyl
+
+        artExecutor.execute {
+            try {
+                val conn = (URL(thumbUrl).openConnection() as HttpURLConnection).apply {
+                    connectTimeout = 8000
+                    readTimeout = 8000
+                    instanceFollowRedirects = true
+                }
+                val rawBmp = conn.inputStream.use { BitmapFactory.decodeStream(it) }
+                conn.disconnect()
+                if (rawBmp != null) {
+                    val vinylBmp = createVinylRecordBitmap(rawBmp)
+                    bitmapCache.put(thumbUrl, vinylBmp)
+                    mainHandler.post {
+                        val activeTrack = playlist.getOrNull(currentIndex)
+                        if (activeTrack != null && activeTrack.id == track.id) {
+                            currentVinylBitmap = vinylBmp
+                            updateMediaSessionMetadata(activeTrack, currentDurationMs.toLong(), vinylBmp)
+                            startOrUpdateForegroundNotification(activeTrack)
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Kapak resmi indirilemedi: ${e.message}")
+            }
+        }
+    }
+
     private fun playCurrentTrack() {
         val track = playlist.getOrNull(currentIndex)
         if (track == null) {
@@ -262,6 +408,7 @@ class MusicPlayerService : Service() {
         }
 
         releaseMediaPlayer()
+        loadVinylArtworkForTrack(track)
 
         try {
             val mp = MediaPlayer().apply {
@@ -278,7 +425,7 @@ class MusicPlayerService : Service() {
                     currentPositionMs = 0
                     player.start()
                     isPlayingState = true
-                    updateMediaSessionMetadata(track, currentDurationMs.toLong())
+                    updateMediaSessionMetadata(track, currentDurationMs.toLong(), currentVinylBitmap)
                     updateMediaSessionPlaybackState()
                     startOrUpdateForegroundNotification(track)
                     emitStateToRN()
@@ -384,14 +531,19 @@ class MusicPlayerService : Service() {
         mediaPlayer = null
     }
 
-    private fun updateMediaSessionMetadata(track: PlaylistTrack, durationMs: Long) {
+    private fun updateMediaSessionMetadata(track: PlaylistTrack, durationMs: Long, artwork: Bitmap?) {
         val session = mediaSession ?: return
-        val meta = MediaMetadata.Builder()
+        val builder = MediaMetadata.Builder()
             .putString(MediaMetadata.METADATA_KEY_TITLE, track.title)
             .putString(MediaMetadata.METADATA_KEY_ARTIST, track.uploader.ifEmpty { "MediaToolkit" })
             .putLong(MediaMetadata.METADATA_KEY_DURATION, durationMs)
-            .build()
-        session.setMetadata(meta)
+
+        if (artwork != null && !artwork.isRecycled) {
+            builder.putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, artwork)
+            builder.putBitmap(MediaMetadata.METADATA_KEY_ART, artwork)
+            builder.putBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON, artwork)
+        }
+        session.setMetadata(builder.build())
     }
 
     private fun updateMediaSessionPlaybackState() {
@@ -468,6 +620,11 @@ class MusicPlayerService : Service() {
             .addAction(Notification.Action.Builder(playPauseIcon, playPauseLabel, playPausePending).build())
             .addAction(Notification.Action.Builder(android.R.drawable.ic_media_next, "Sonraki", nextPending).build())
             .addAction(Notification.Action.Builder(android.R.drawable.ic_menu_close_clear_cancel, "Kapat", stopPending).build())
+
+        val bmp = currentVinylBitmap
+        if (bmp != null && !bmp.isRecycled) {
+            builder.setLargeIcon(bmp)
+        }
 
         if (contentPendingIntent != null) {
             builder.setContentIntent(contentPendingIntent)

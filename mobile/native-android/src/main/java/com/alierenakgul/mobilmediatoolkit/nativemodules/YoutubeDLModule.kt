@@ -1,6 +1,11 @@
 package com.alierenakgul.mobilmediatoolkit.nativemodules
 
+import android.app.Dialog
 import android.content.Intent
+import android.content.pm.ActivityInfo
+import android.graphics.Color
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat as AndroidMediaFormat
@@ -8,7 +13,21 @@ import android.media.MediaMuxer
 import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Environment
+import android.os.Handler
+import android.os.Looper
+import android.text.TextUtils
 import android.util.Log
+import android.util.TypedValue
+import android.view.Gravity
+import android.view.View
+import android.view.ViewGroup
+import android.view.Window
+import android.view.WindowManager
+import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.widget.SeekBar
+import android.widget.TextView
+import android.widget.VideoView
 import androidx.core.content.FileProvider
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
@@ -226,6 +245,22 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
         }
     }
 
+    private fun getFileProviderUri(targetFile: File): Uri {
+        return try {
+            FileProvider.getUriForFile(
+                reactContext,
+                "${reactContext.packageName}.mediatoolkit.provider",
+                targetFile
+            )
+        } catch (_: Exception) {
+            FileProvider.getUriForFile(
+                reactContext,
+                "${reactContext.packageName}.SharingFileProvider",
+                targetFile
+            )
+        }
+    }
+
     @ReactMethod
     fun openOrShareFile(filePathOrUrl: String, filename: String, actionType: String, promise: Promise) {
         executor.execute {
@@ -233,12 +268,13 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
                 val targetFile = resolveExistingFile(filePathOrUrl, filename)
                     ?: throw IOException("Dosya cihazda bulunamadı: $filename")
 
+                if (actionType == "open" && targetFile.extension.lowercase() in listOf("mp4", "m4v", "webm")) {
+                    playVideoInAppInternal(targetFile, filename.removeSuffix(".mp4"), "MediaToolkit", promise)
+                    return@execute
+                }
+
                 val mimeType = getMimeTypeForFile(targetFile)
-                val uri: Uri = FileProvider.getUriForFile(
-                    reactContext,
-                    "${reactContext.packageName}.SharingFileProvider",
-                    targetFile
-                )
+                val uri: Uri = getFileProviderUri(targetFile)
 
                 val intent = if (actionType == "open") {
                     Intent(Intent.ACTION_VIEW).apply {
@@ -272,6 +308,395 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
         }
     }
 
+    private fun dpToPx(dp: Int): Int {
+        return TypedValue.applyDimension(
+            TypedValue.COMPLEX_UNIT_DIP,
+            dp.toFloat(),
+            reactContext.resources.displayMetrics
+        ).toInt()
+    }
+
+    private fun formatTimeMs(ms: Int): String {
+        val totalSec = (ms / 1000).coerceAtLeast(0)
+        val mins = totalSec / 60
+        val secs = totalSec % 60
+        return String.format("%02d:%02d", mins, secs)
+    }
+
+    @ReactMethod
+    fun playVideoInApp(
+        filePathOrUrl: String,
+        filename: String,
+        title: String,
+        uploader: String,
+        promise: Promise
+    ) {
+        executor.execute {
+            try {
+                val targetFile = resolveExistingFile(filePathOrUrl, filename)
+                    ?: throw IOException("Video dosyası cihazda bulunamadı: $filename")
+                playVideoInAppInternal(
+                    targetFile,
+                    title.ifBlank { filename },
+                    uploader.ifBlank { "MediaToolkit" },
+                    promise
+                )
+            } catch (e: Exception) {
+                Log.e(TAG, "playVideoInApp hatası", e)
+                promise.reject("VIDEO_PLAYER_ERROR", e.localizedMessage ?: "Video oynatılamadı", e)
+            }
+        }
+    }
+
+    private fun playVideoInAppInternal(
+        targetFile: File,
+        title: String,
+        uploader: String,
+        promise: Promise
+    ) {
+        // Arka planda şarkı çalıyorsa çakışmaması için duraklat
+        MusicPlayerService.pauseIfPlaying()
+
+        val activity = reactContext.currentActivity
+        if (activity == null) {
+            promise.reject("NO_ACTIVITY", "Aktif ekran bulunamadı.")
+            return
+        }
+
+        val uiHandler = Handler(Looper.getMainLooper())
+        uiHandler.post {
+            try {
+                val dialog = Dialog(activity, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
+                dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+                dialog.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+
+                var isLandscape = false
+                var isSeeking = false
+                var durationMs = 0
+
+                val rootLayout = FrameLayout(activity).apply {
+                    setBackgroundColor(Color.parseColor("#090D16"))
+                    layoutParams = ViewGroup.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT
+                    )
+                }
+
+                // Merkez VideoView
+                val videoContainer = FrameLayout(activity).apply {
+                    layoutParams = FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        Gravity.CENTER
+                    )
+                }
+
+                val videoView = VideoView(activity).apply {
+                    layoutParams = FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        Gravity.CENTER
+                    )
+                    setVideoPath(targetFile.absolutePath)
+                }
+                videoContainer.addView(videoView)
+                rootLayout.addView(videoContainer)
+
+                // Üst Başlık Çubuğu (Geri + Başlık + Döndür + Paylaş)
+                val topBar = LinearLayout(activity).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    setBackgroundColor(Color.parseColor("#CC0F172A"))
+                    setPadding(dpToPx(14), dpToPx(14), dpToPx(14), dpToPx(14))
+                    layoutParams = FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        Gravity.TOP
+                    )
+                }
+
+                val backBtn = TextView(activity).apply {
+                    text = "← Geri"
+                    setTextColor(Color.WHITE)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                    typeface = Typeface.DEFAULT_BOLD
+                    setPadding(dpToPx(12), dpToPx(7), dpToPx(12), dpToPx(7))
+                    background = GradientDrawable().apply {
+                        setColor(Color.parseColor("#334155"))
+                        cornerRadius = dpToPx(8).toFloat()
+                    }
+                    setOnClickListener {
+                        dialog.dismiss()
+                    }
+                }
+
+                val titleCol = LinearLayout(activity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                        marginStart = dpToPx(12)
+                        marginEnd = dpToPx(12)
+                    }
+                }
+
+                val titleTv = TextView(activity).apply {
+                    text = title
+                    setTextColor(Color.WHITE)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                    typeface = Typeface.DEFAULT_BOLD
+                    maxLines = 1
+                    ellipsize = TextUtils.TruncateAt.END
+                }
+
+                val subTv = TextView(activity).apply {
+                    text = uploader
+                    setTextColor(Color.parseColor("#94A3B8"))
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+                    maxLines = 1
+                    ellipsize = TextUtils.TruncateAt.END
+                }
+
+                titleCol.addView(titleTv)
+                titleCol.addView(subTv)
+
+                val rotateBtn = TextView(activity).apply {
+                    text = "🔄 Döndür"
+                    setTextColor(Color.WHITE)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                    typeface = Typeface.DEFAULT_BOLD
+                    setPadding(dpToPx(10), dpToPx(7), dpToPx(10), dpToPx(7))
+                    background = GradientDrawable().apply {
+                        setColor(Color.parseColor("#1E293B"))
+                        setStroke(dpToPx(1), Color.parseColor("#475569"))
+                        cornerRadius = dpToPx(8).toFloat()
+                    }
+                    setOnClickListener {
+                        isLandscape = !isLandscape
+                        activity.requestedOrientation = if (isLandscape) {
+                            ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                        } else {
+                            ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                        }
+                    }
+                }
+
+                topBar.addView(backBtn)
+                topBar.addView(titleCol)
+                topBar.addView(rotateBtn)
+                rootLayout.addView(topBar)
+
+                // Alt Kontrol Çubuğu (Süre + SeekBar + -10sn / Oynat-Duraklat / +10sn)
+                val bottomBar = LinearLayout(activity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setBackgroundColor(Color.parseColor("#D90F172A"))
+                    setPadding(dpToPx(16), dpToPx(12), dpToPx(16), dpToPx(24))
+                    layoutParams = FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        Gravity.BOTTOM
+                    )
+                }
+
+                val seekRow = LinearLayout(activity).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    layoutParams = LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT
+                    )
+                }
+
+                val currentTimeTv = TextView(activity).apply {
+                    text = "00:00"
+                    setTextColor(Color.parseColor("#E2E8F0"))
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                    typeface = Typeface.MONOSPACE
+                }
+
+                val totalTimeTv = TextView(activity).apply {
+                    text = "00:00"
+                    setTextColor(Color.parseColor("#94A3B8"))
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                    typeface = Typeface.MONOSPACE
+                }
+
+                val seekBar = SeekBar(activity).apply {
+                    max = 1000
+                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                        marginStart = dpToPx(8)
+                        marginEnd = dpToPx(8)
+                    }
+                    setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                        override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
+                            if (fromUser && durationMs > 0) {
+                                val target = ((progress.toLong() * durationMs) / 1000L).toInt()
+                                currentTimeTv.text = formatTimeMs(target)
+                            }
+                        }
+
+                        override fun onStartTrackingTouch(sb: SeekBar?) {
+                            isSeeking = true
+                        }
+
+                        override fun onStopTrackingTouch(sb: SeekBar?) {
+                            if (durationMs > 0 && sb != null) {
+                                val target = ((sb.progress.toLong() * durationMs) / 1000L).toInt()
+                                videoView.seekTo(target)
+                            }
+                            isSeeking = false
+                        }
+                    })
+                }
+
+                seekRow.addView(currentTimeTv)
+                seekRow.addView(seekBar)
+                seekRow.addView(totalTimeTv)
+
+                val controlsRow = LinearLayout(activity).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER
+                    layoutParams = LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT
+                    ).apply {
+                        topMargin = dpToPx(10)
+                    }
+                }
+
+                val playPauseBtn = TextView(activity).apply {
+                    text = "⏸ Duraklat"
+                    setTextColor(Color.WHITE)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                    typeface = Typeface.DEFAULT_BOLD
+                    gravity = Gravity.CENTER
+                    setPadding(dpToPx(24), dpToPx(10), dpToPx(24), dpToPx(10))
+                    background = GradientDrawable().apply {
+                        setColor(Color.parseColor("#0284C7"))
+                        cornerRadius = dpToPx(24).toFloat()
+                    }
+                }
+
+                val rwBtn = TextView(activity).apply {
+                    text = "⏪ -10 sn"
+                    setTextColor(Color.WHITE)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                    typeface = Typeface.DEFAULT_BOLD
+                    setPadding(dpToPx(14), dpToPx(9), dpToPx(14), dpToPx(9))
+                    background = GradientDrawable().apply {
+                        setColor(Color.parseColor("#1E293B"))
+                        cornerRadius = dpToPx(18).toFloat()
+                    }
+                    layoutParams = LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT
+                    ).apply {
+                        marginEnd = dpToPx(16)
+                    }
+                    setOnClickListener {
+                        val target = (videoView.currentPosition - 10000).coerceAtLeast(0)
+                        videoView.seekTo(target)
+                        currentTimeTv.text = formatTimeMs(target)
+                    }
+                }
+
+                val ffBtn = TextView(activity).apply {
+                    text = "+10 sn ⏩"
+                    setTextColor(Color.WHITE)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                    typeface = Typeface.DEFAULT_BOLD
+                    setPadding(dpToPx(14), dpToPx(9), dpToPx(14), dpToPx(9))
+                    background = GradientDrawable().apply {
+                        setColor(Color.parseColor("#1E293B"))
+                        cornerRadius = dpToPx(18).toFloat()
+                    }
+                    layoutParams = LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT
+                    ).apply {
+                        marginStart = dpToPx(16)
+                    }
+                    setOnClickListener {
+                        val maxPos = if (durationMs > 0) durationMs else Int.MAX_VALUE
+                        val target = (videoView.currentPosition + 10000).coerceAtMost(maxPos)
+                        videoView.seekTo(target)
+                        currentTimeTv.text = formatTimeMs(target)
+                    }
+                }
+
+                playPauseBtn.setOnClickListener {
+                    if (videoView.isPlaying) {
+                        videoView.pause()
+                        playPauseBtn.text = "▶ Oynat"
+                    } else {
+                        videoView.start()
+                        playPauseBtn.text = "⏸ Duraklat"
+                    }
+                }
+
+                controlsRow.addView(rwBtn)
+                controlsRow.addView(playPauseBtn)
+                controlsRow.addView(ffBtn)
+
+                bottomBar.addView(seekRow)
+                bottomBar.addView(controlsRow)
+                rootLayout.addView(bottomBar)
+
+                // Ekrana dokununca üst ve alt barı gizle/göster
+                videoContainer.setOnClickListener {
+                    val vis = if (topBar.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+                    topBar.visibility = vis
+                    bottomBar.visibility = vis
+                }
+
+                val ticker = object : Runnable {
+                    override fun run() {
+                        if (dialog.isShowing) {
+                            try {
+                                if (videoView.isPlaying && !isSeeking) {
+                                    val pos = videoView.currentPosition
+                                    currentTimeTv.text = formatTimeMs(pos)
+                                    if (durationMs > 0) {
+                                        seekBar.progress = ((pos.toLong() * 1000L) / durationMs).toInt().coerceIn(0, 1000)
+                                    }
+                                }
+                            } catch (_: Exception) {}
+                            uiHandler.postDelayed(this, 400L)
+                        }
+                    }
+                }
+
+                videoView.setOnPreparedListener { mp ->
+                    durationMs = mp.duration.coerceAtLeast(0)
+                    totalTimeTv.text = formatTimeMs(durationMs)
+                    videoView.start()
+                    playPauseBtn.text = "⏸ Duraklat"
+                    uiHandler.post(ticker)
+                }
+
+                videoView.setOnCompletionListener {
+                    playPauseBtn.text = "▶ Tekrar Oynat"
+                    seekBar.progress = 1000
+                }
+
+                dialog.setOnDismissListener {
+                    uiHandler.removeCallbacksAndMessages(null)
+                    try {
+                        videoView.stopPlayback()
+                    } catch (_: Exception) {}
+                    try {
+                        activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                    } catch (_: Exception) {}
+                }
+
+                dialog.setContentView(rootLayout)
+                dialog.show()
+                promise.resolve(true)
+            } catch (e: Exception) {
+                Log.e(TAG, "Uygulama içi video oynatıcı hatası", e)
+                promise.reject("VIDEO_DIALOG_ERROR", e.localizedMessage ?: "Video ekranı açılamadı", e)
+            }
+        }
+    }
+
     // --- ARKA PLAN MÜZİK ÇALAR METOTLARI ---
 
     @ReactMethod
@@ -291,7 +716,8 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
                         title = map.getString("title") ?: fname,
                         uploader = map.getString("uploader") ?: map.getString("channel") ?: "MediaToolkit",
                         filePath = resolvedFile.absolutePath,
-                        filename = fname
+                        filename = fname,
+                        thumbnail = map.getString("thumbnail") ?: ""
                     )
                 )
             }

@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   Alert,
   Platform,
+  Image,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import {
@@ -16,6 +17,7 @@ import {
   downloadFileToDevice,
   playAudioPlaylist,
   togglePlayPauseAudio,
+  playVideoInApp,
 } from '../services/api';
 
 function isItemAudio(item) {
@@ -30,7 +32,11 @@ function isItemAudio(item) {
   );
 }
 
-export default function HistoryTab({ onSwitchToDownloader, playerState }) {
+export default function HistoryTab({
+  onSwitchToDownloader,
+  playerState,
+  onOpenExpandedPlayer,
+}) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState(null);
@@ -104,13 +110,25 @@ export default function HistoryTab({ onSwitchToDownloader, playerState }) {
     }
   };
 
-  const handleOpenOrShare = async (item, actionType = 'open') => {
-    const key = `${item.filename}_${actionType}`;
+  const handlePlayVideo = async (item) => {
+    const key = `${item.filename}_video`;
     setActionLoading(key);
     try {
-      await downloadFileToDevice(item.download_url, item.filename, actionType);
+      await playVideoInApp(item);
     } catch (e) {
-      Alert.alert('Hata', 'Dosya işlemi başarısız: ' + e.message);
+      Alert.alert('Video Hatası', 'Video açılamadı: ' + e.message);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleShare = async (item) => {
+    const key = `${item.filename}_share`;
+    setActionLoading(key);
+    try {
+      await downloadFileToDevice(item.download_url, item.filename, 'share');
+    } catch (e) {
+      Alert.alert('Paylaşım Hatası', 'Dosya paylaşılamadı: ' + e.message);
     } finally {
       setActionLoading(null);
     }
@@ -151,7 +169,7 @@ export default function HistoryTab({ onSwitchToDownloader, playerState }) {
       ? 'M4A'
       : 'MP4';
 
-    const isOpenLoading = actionLoading === `${item.filename}_open`;
+    const isVideoLoading = actionLoading === `${item.filename}_video`;
     const isShareLoading = actionLoading === `${item.filename}_share`;
 
     const isCurrentTrack =
@@ -161,172 +179,220 @@ export default function HistoryTab({ onSwitchToDownloader, playerState }) {
         (item.filename && playerState.filename === item.filename));
     const isCurrentTrackPlaying = isCurrentTrack && playerState?.isPlaying;
 
+    const metaParts = [];
+    if (item.uploader) metaParts.push(item.uploader);
+    if (item.filesize) metaParts.push(item.filesize);
+    if (item.quality) {
+      metaParts.push(item.quality === 'high' ? 'AAC' : item.quality);
+    }
+    const subtitleText = metaParts.join(' • ') || (item.date || 'Bugün');
+
     return (
-      <View
+      <TouchableOpacity
+        activeOpacity={0.78}
+        onPress={() => {
+          if (isAudio) {
+            if (isCurrentTrack && onOpenExpandedPlayer) {
+              onOpenExpandedPlayer();
+            } else {
+              handlePlaySong(item);
+            }
+          } else {
+            handlePlayVideo(item);
+          }
+        }}
         style={[
-          styles.historyCard,
-          isCurrentTrack && styles.historyCardPlaying,
+          styles.compactCard,
+          isCurrentTrack && styles.compactCardPlaying,
         ]}
       >
-        <View style={styles.cardHeader}>
-          <View style={styles.badgeRow}>
+        {/* Sol: Kapak Görseli (Şarkılar için Plak Görünümü, Videolar için 16:9 Kapak) */}
+        <View style={styles.thumbWrapper}>
+          {isAudio ? (
             <View
               style={[
-                styles.typeBadge,
-                { backgroundColor: isAudio ? '#4F46E5' : '#0284C7' },
+                styles.vinylThumbOuter,
+                isCurrentTrackPlaying && styles.vinylThumbActiveBorder,
               ]}
             >
-              <Ionicons
-                name={isAudio ? 'musical-notes' : 'videocam'}
-                size={12}
-                color="#FFFFFF"
-              />
-              <Text style={styles.typeBadgeText}>{badgeLabel}</Text>
+              {item.thumbnail ? (
+                <Image
+                  source={{ uri: item.thumbnail }}
+                  style={styles.vinylThumbImage}
+                  resizeMode="cover"
+                />
+              ) : (
+                <View style={styles.vinylFallback}>
+                  <Ionicons name="musical-notes" size={16} color="#FFFFFF" />
+                </View>
+              )}
+              <View style={styles.vinylCenterHole} />
             </View>
+          ) : (
+            <View style={styles.videoThumbBox}>
+              {item.thumbnail ? (
+                <Image
+                  source={{ uri: item.thumbnail }}
+                  style={styles.videoThumbImage}
+                  resizeMode="cover"
+                />
+              ) : (
+                <View style={styles.videoFallback}>
+                  <Ionicons name="videocam" size={18} color="#FFFFFF" />
+                </View>
+              )}
+              <View style={styles.videoPlayOverlay}>
+                <Ionicons name="play" size={13} color="#FFFFFF" />
+              </View>
+            </View>
+          )}
 
+          {/* Küçük Format Rozeti */}
+          <View
+            style={[
+              styles.miniTypeBadge,
+              { backgroundColor: isAudio ? '#4F46E5' : '#0284C7' },
+            ]}
+          >
+            <Text style={styles.miniTypeBadgeText}>{badgeLabel}</Text>
+          </View>
+        </View>
+
+        {/* Orta: Başlık & Detay Satırı */}
+        <View style={styles.infoCol}>
+          <Text
+            style={[
+              styles.titleText,
+              isCurrentTrack && styles.titleTextPlaying,
+            ]}
+            numberOfLines={1}
+          >
+            {item.title || item.filename}
+          </Text>
+
+          <View style={styles.subRow}>
             {isCurrentTrack && (
-              <View style={styles.nowPlayingBadge}>
+              <View style={styles.liveDotBadge}>
                 <Ionicons
                   name={isCurrentTrackPlaying ? 'volume-high' : 'pause'}
-                  size={12}
+                  size={10}
                   color="#4F46E5"
                 />
-                <Text style={styles.nowPlayingBadgeText}>
-                  {isCurrentTrackPlaying ? 'Şu An Çalıyor' : 'Duraklatıldı'}
+                <Text style={styles.liveDotText}>
+                  {isCurrentTrackPlaying ? 'Çalıyor' : 'Duraklatıldı'}
                 </Text>
               </View>
             )}
+            <Text style={styles.subtitleText} numberOfLines={1}>
+              {subtitleText}
+            </Text>
           </View>
-
-          <Text style={styles.dateText}>{item.date || 'Bugün'}</Text>
         </View>
 
-        <TouchableOpacity
-          activeOpacity={isAudio ? 0.7 : 1}
-          onPress={() => {
-            if (isAudio) handlePlaySong(item);
-          }}
-        >
-          <Text style={styles.titleText} numberOfLines={2}>
-            {item.title || item.filename}
-          </Text>
-        </TouchableOpacity>
-
-        <View style={styles.metaRow}>
-          {item.uploader ? (
-            <Text style={styles.uploaderText} numberOfLines={1}>
-              {item.uploader}
-            </Text>
-          ) : null}
-          {item.filesize ? (
-            <Text style={styles.sizeText}>{item.filesize}</Text>
-          ) : null}
-          {item.quality ? (
-            <Text style={styles.qualityText}>
-              {item.quality === 'high' ? 'Yüksek (AAC)' : item.quality}
-            </Text>
-          ) : null}
-        </View>
-
-        {/* Aksiyon butonları */}
-        <View style={styles.actionsRow}>
+        {/* Sağ: Kompakt Aksiyon İkonları */}
+        <View style={styles.actionsCol}>
           {isAudio ? (
             <TouchableOpacity
               style={[
-                styles.playAudioBtn,
-                isCurrentTrackPlaying && styles.playAudioBtnActive,
+                styles.primaryCircleBtn,
+                { backgroundColor: isCurrentTrackPlaying ? '#4338CA' : '#4F46E5' },
               ]}
               onPress={() => handlePlaySong(item)}
             >
               <Ionicons
-                name={isCurrentTrackPlaying ? 'pause-circle' : 'play-circle'}
-                size={19}
+                name={isCurrentTrackPlaying ? 'pause' : 'play'}
+                size={16}
                 color="#FFFFFF"
+                style={!isCurrentTrackPlaying ? { marginLeft: 1 } : undefined}
               />
-              <Text style={styles.playAudioBtnText}>
-                {isCurrentTrack
-                  ? isCurrentTrackPlaying
-                    ? 'Duraklat'
-                    : 'Devam Et'
-                  : 'Arka Planda Dinle'}
-              </Text>
             </TouchableOpacity>
           ) : (
             <TouchableOpacity
-              style={styles.downloadBtn}
-              onPress={() => handleOpenOrShare(item, 'open')}
-              disabled={isOpenLoading}
+              style={[styles.primaryCircleBtn, { backgroundColor: '#0284C7' }]}
+              onPress={() => handlePlayVideo(item)}
+              disabled={isVideoLoading}
             >
-              {isOpenLoading ? (
+              {isVideoLoading ? (
                 <ActivityIndicator size="small" color="#FFFFFF" />
               ) : (
-                <>
-                  <Ionicons name="play-outline" size={17} color="#FFFFFF" />
-                  <Text style={styles.downloadBtnText}>Videoyu Aç</Text>
-                </>
+                <Ionicons
+                  name="play"
+                  size={16}
+                  color="#FFFFFF"
+                  style={{ marginLeft: 1 }}
+                />
               )}
             </TouchableOpacity>
           )}
 
-          {/* Paylaş Butonu */}
           <TouchableOpacity
-            style={styles.secondaryActionBtn}
-            onPress={() => handleOpenOrShare(item, 'share')}
+            style={styles.iconCircleBtn}
+            onPress={() => handleShare(item)}
             disabled={isShareLoading}
           >
             {isShareLoading ? (
               <ActivityIndicator size="small" color="#2563EB" />
             ) : (
-              <>
-                <Ionicons name="share-social-outline" size={16} color="#2563EB" />
-                <Text style={styles.secondaryActionText}>Paylaş</Text>
-              </>
+              <Ionicons name="share-social-outline" size={15} color="#2563EB" />
             )}
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={styles.deleteBtn}
+            style={styles.iconCircleBtn}
             onPress={() => handleDelete(item.filename)}
           >
-            <Ionicons name="trash-outline" size={16} color="#EF4444" />
+            <Ionicons name="trash-outline" size={15} color="#EF4444" />
           </TouchableOpacity>
         </View>
-      </View>
+      </TouchableOpacity>
     );
   };
 
   return (
     <View style={styles.container}>
-      {/* Header */}
+      {/* Kompakt Üst Başlık */}
       <View style={styles.header}>
-        <View style={styles.headerLeftCol}>
+        <View style={styles.headerLeftRow}>
           <TouchableOpacity
-            style={styles.backBtn}
+            style={styles.backIconBtn}
             onPress={onSwitchToDownloader}
           >
-            <Ionicons name="arrow-back" size={16} color="#2563EB" />
-            <Text style={styles.backBtnText}>İndiriciye Dön</Text>
+            <Ionicons name="arrow-back" size={18} color="#2563EB" />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>İndirilenler & Müzik Çalar</Text>
-          <Text style={styles.headerSubtitle}>
-            {audioItems.length} şarkı • {videoItems.length} video hazır
-          </Text>
+          <View>
+            <Text style={styles.headerTitle}>İndirilenler</Text>
+            <Text style={styles.headerSubtitle}>
+              {audioItems.length} şarkı • {videoItems.length} video
+            </Text>
+          </View>
         </View>
 
-        <TouchableOpacity
-          style={styles.refreshBtn}
-          onPress={loadHistory}
-          disabled={loading}
-        >
-          {loading ? (
-            <ActivityIndicator size="small" color="#2563EB" />
-          ) : (
-            <Ionicons name="refresh" size={18} color="#2563EB" />
+        <View style={styles.headerRightActions}>
+          {audioItems.length > 0 && (
+            <TouchableOpacity
+              style={styles.playAllCompactBtn}
+              onPress={handlePlayAllSongs}
+            >
+              <Ionicons name="headset" size={14} color="#FFFFFF" />
+              <Text style={styles.playAllCompactText}>Tümünü Çal</Text>
+            </TouchableOpacity>
           )}
-        </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.refreshBtn}
+            onPress={loadHistory}
+            disabled={loading}
+          >
+            {loading ? (
+              <ActivityIndicator size="small" color="#2563EB" />
+            ) : (
+              <Ionicons name="refresh" size={17} color="#2563EB" />
+            )}
+          </TouchableOpacity>
+        </View>
       </View>
 
-      {/* Filtre Sekmeleri: Tümü | Şarkılar | Videolar */}
+      {/* Kompakt Filtre Sekmeleri: Tümü | Şarkılar | Videolar */}
       {items.length > 0 && (
         <View style={styles.filterRow}>
           <TouchableOpacity
@@ -354,8 +420,8 @@ export default function HistoryTab({ onSwitchToDownloader, playerState }) {
             onPress={() => setFilterType('audio')}
           >
             <Ionicons
-              name="musical-notes"
-              size={14}
+              name="disc"
+              size={13}
               color={filterType === 'audio' ? '#FFFFFF' : '#4F46E5'}
             />
             <Text
@@ -377,7 +443,7 @@ export default function HistoryTab({ onSwitchToDownloader, playerState }) {
           >
             <Ionicons
               name="videocam"
-              size={14}
+              size={13}
               color={filterType === 'video' ? '#FFFFFF' : '#0284C7'}
             />
             <Text
@@ -392,29 +458,6 @@ export default function HistoryTab({ onSwitchToDownloader, playerState }) {
         </View>
       )}
 
-      {/* Tüm Şarkıları Arka Planda Çal Butonu */}
-      {audioItems.length > 0 && filterType !== 'video' && (
-        <TouchableOpacity
-          style={styles.playAllBanner}
-          onPress={handlePlayAllSongs}
-        >
-          <View style={styles.playAllLeft}>
-            <View style={styles.playAllIconBox}>
-              <Ionicons name="headset" size={18} color="#FFFFFF" />
-            </View>
-            <View>
-              <Text style={styles.playAllTitle}>
-                Tüm Şarkıları Arka Planda Çal ({audioItems.length})
-              </Text>
-              <Text style={styles.playAllSub}>
-                Ekran kapansa bile çalmaya devam eder • Bildirimden kontrol
-              </Text>
-            </View>
-          </View>
-          <Ionicons name="play" size={18} color="#4F46E5" />
-        </TouchableOpacity>
-      )}
-
       {/* Liste veya Boş Durum */}
       {filteredItems.length === 0 ? (
         <View style={styles.emptyContainer}>
@@ -424,7 +467,7 @@ export default function HistoryTab({ onSwitchToDownloader, playerState }) {
                 ? 'musical-notes-outline'
                 : 'cloud-download-outline'
             }
-            size={56}
+            size={48}
             color="#CBD5E1"
           />
           <Text style={styles.emptyTitle}>
@@ -435,14 +478,14 @@ export default function HistoryTab({ onSwitchToDownloader, playerState }) {
               : 'Henüz indirme yok'}
           </Text>
           <Text style={styles.emptyText}>
-            YouTube'dan bir link yapıştırıp M4A (Ses) olarak indirdiğinizde burada arka planda kesintisiz dinleyebilirsiniz.
+            YouTube'dan indirdiğiniz şarkı ve videolar kapak resimleriyle birlikte burada listelenir.
           </Text>
           <TouchableOpacity
             style={styles.goToDownloadBtn}
             onPress={onSwitchToDownloader}
           >
             <Ionicons name="add" size={18} color="#FFFFFF" />
-            <Text style={styles.goToDownloadText}>Yeni Şarkı / Video İndir</Text>
+            <Text style={styles.goToDownloadText}>Yeni Medya İndir</Text>
           </TouchableOpacity>
         </View>
       ) : (
@@ -462,49 +505,62 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#F8FAFC',
-    paddingHorizontal: 16,
-    paddingTop: 14,
+    paddingHorizontal: 14,
+    paddingTop: 10,
   },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 12,
+    alignItems: 'center',
+    marginBottom: 10,
   },
-  headerLeftCol: {
-    flex: 1,
-  },
-  backBtn: {
+  headerLeftRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    marginBottom: 6,
-    alignSelf: 'flex-start',
-    backgroundColor: '#F1F5F9',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
+    gap: 10,
   },
-  backBtnText: {
-    color: '#2563EB',
-    fontSize: 12,
-    fontWeight: '700',
+  backIconBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    backgroundColor: '#EFF6FF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
   },
   headerTitle: {
-    fontSize: 20,
+    fontSize: 17,
     fontWeight: '800',
     color: '#0F172A',
   },
   headerSubtitle: {
-    fontSize: 12,
+    fontSize: 11,
     color: '#64748B',
-    marginTop: 2,
+    marginTop: 1,
+  },
+  headerRightActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  playAllCompactBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: '#4F46E5',
+    paddingHorizontal: 11,
+    height: 34,
+    borderRadius: 10,
+  },
+  playAllCompactText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
   },
   refreshBtn: {
-    width: 38,
-    height: 38,
+    width: 34,
+    height: 34,
     borderRadius: 10,
     backgroundColor: '#F1F5F9',
     alignItems: 'center',
@@ -514,231 +570,196 @@ const styles = StyleSheet.create({
   },
   filterRow: {
     flexDirection: 'row',
-    gap: 8,
-    marginBottom: 12,
+    gap: 6,
+    marginBottom: 10,
   },
   filterChip: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 5,
-    paddingVertical: 8,
-    borderRadius: 10,
+    gap: 4,
+    paddingVertical: 6,
+    borderRadius: 9,
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
     borderColor: '#E2E8F0',
   },
   filterChipActive: {
-    backgroundColor: '#2563EB',
-    borderColor: '#2563EB',
+    backgroundColor: '#0284C7',
+    borderColor: '#0284C7',
   },
   filterChipActiveAudio: {
     backgroundColor: '#4F46E5',
     borderColor: '#4F46E5',
   },
   filterChipText: {
-    fontSize: 12,
+    fontSize: 11.5,
     fontWeight: '700',
     color: '#475569',
   },
   filterChipTextActive: {
     color: '#FFFFFF',
   },
-  playAllBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#EEF2FF',
-    borderWidth: 1,
-    borderColor: '#C7D2FE',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 12,
-    marginBottom: 12,
-  },
-  playAllLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    flex: 1,
-  },
-  playAllIconBox: {
-    width: 34,
-    height: 34,
-    borderRadius: 9,
-    backgroundColor: '#4F46E5',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  playAllTitle: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#312E81',
-  },
-  playAllSub: {
-    fontSize: 11,
-    color: '#4338CA',
-    marginTop: 1,
-  },
   listContent: {
-    paddingBottom: 24,
-    gap: 12,
+    paddingBottom: 20,
+    gap: 8,
   },
-  historyCard: {
+  compactCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
     backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    padding: 14,
+    borderRadius: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
     borderWidth: 1,
     borderColor: '#E2E8F0',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
-    shadowRadius: 6,
-    elevation: 2,
+    gap: 10,
   },
-  historyCardPlaying: {
+  compactCardPlaying: {
     borderColor: '#6366F1',
-    borderWidth: 1.5,
     backgroundColor: '#F5F3FF',
   },
-  cardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+  thumbWrapper: {
+    position: 'relative',
+    width: 48,
+    height: 48,
     alignItems: 'center',
-    marginBottom: 8,
+    justifyContent: 'center',
   },
-  badgeRow: {
-    flexDirection: 'row',
+  vinylThumbOuter: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    backgroundColor: '#111827',
+    padding: 4,
     alignItems: 'center',
-    gap: 8,
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: '#374151',
   },
-  typeBadge: {
-    flexDirection: 'row',
+  vinylThumbActiveBorder: {
+    borderColor: '#6366F1',
+  },
+  vinylThumbImage: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 20,
+  },
+  vinylFallback: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 20,
+    backgroundColor: '#4F46E5',
     alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
+    justifyContent: 'center',
   },
-  typeBadgeText: {
+  vinylCenterHole: {
+    position: 'absolute',
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#111827',
+    borderWidth: 2,
+    borderColor: '#E5E7EB',
+  },
+  videoThumbBox: {
+    width: 48,
+    height: 40,
+    borderRadius: 8,
+    overflow: 'hidden',
+    backgroundColor: '#0F172A',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  videoThumbImage: {
+    width: '100%',
+    height: '100%',
+  },
+  videoFallback: {
+    width: '100%',
+    height: '100%',
+    backgroundColor: '#0284C7',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  videoPlayOverlay: {
+    position: 'absolute',
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  miniTypeBadge: {
+    position: 'absolute',
+    bottom: -2,
+    right: -2,
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: '#FFFFFF',
+  },
+  miniTypeBadgeText: {
     color: '#FFFFFF',
-    fontSize: 11,
+    fontSize: 8.5,
     fontWeight: '800',
   },
-  nowPlayingBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: '#E0E7FF',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-  },
-  nowPlayingBadgeText: {
-    color: '#4338CA',
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  dateText: {
-    fontSize: 11,
-    color: '#94A3B8',
+  infoCol: {
+    flex: 1,
+    justifyContent: 'center',
   },
   titleText: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '700',
     color: '#0F172A',
-    lineHeight: 19,
-    marginBottom: 6,
+    marginBottom: 3,
   },
-  metaRow: {
+  titleTextPlaying: {
+    color: '#4338CA',
+  },
+  subRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: 10,
-    marginBottom: 12,
+    gap: 6,
   },
-  uploaderText: {
-    fontSize: 12,
-    color: '#475569',
-    fontWeight: '600',
-    maxWidth: 160,
+  liveDotBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: '#E0E7FF',
+    paddingHorizontal: 5,
+    paddingVertical: 1.5,
+    borderRadius: 4,
   },
-  sizeText: {
-    fontSize: 12,
-    color: '#2563EB',
-    fontWeight: '600',
+  liveDotText: {
+    color: '#4338CA',
+    fontSize: 9.5,
+    fontWeight: '700',
   },
-  qualityText: {
-    fontSize: 12,
+  subtitleText: {
+    fontSize: 11,
     color: '#64748B',
-  },
-  actionsRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  playAudioBtn: {
     flex: 1,
+  },
+  actionsCol: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    backgroundColor: '#4F46E5',
-    height: 38,
-    borderRadius: 9,
-    shadowColor: '#4F46E5',
-    shadowOpacity: 0.25,
-    shadowRadius: 4,
-    elevation: 2,
+    gap: 5,
   },
-  playAudioBtnActive: {
-    backgroundColor: '#4338CA',
-  },
-  playAudioBtnText: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  downloadBtn: {
-    flex: 1,
-    flexDirection: 'row',
+  primaryCircleBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
-    backgroundColor: '#0284C7',
-    height: 38,
-    borderRadius: 9,
-    shadowColor: '#0284C7',
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 2,
   },
-  downloadBtnText: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  secondaryActionBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 4,
-    paddingHorizontal: 12,
-    height: 38,
-    borderRadius: 9,
-    backgroundColor: '#EFF6FF',
-    borderWidth: 1,
-    borderColor: '#BFDBFE',
-  },
-  secondaryActionText: {
-    color: '#2563EB',
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  deleteBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 9,
+  iconCircleBtn: {
+    width: 30,
+    height: 30,
+    borderRadius: 8,
     backgroundColor: '#F8FAFC',
     alignItems: 'center',
     justifyContent: 'center',
@@ -752,19 +773,19 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
   },
   emptyTitle: {
-    fontSize: 17,
+    fontSize: 16,
     fontWeight: '700',
     color: '#0F172A',
-    marginTop: 16,
+    marginTop: 14,
     textAlign: 'center',
   },
   emptyText: {
-    fontSize: 13,
+    fontSize: 12.5,
     color: '#64748B',
     textAlign: 'center',
     marginTop: 6,
     lineHeight: 18,
-    marginBottom: 20,
+    marginBottom: 18,
   },
   goToDownloadBtn: {
     flexDirection: 'row',
@@ -774,14 +795,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: 10,
-    shadowColor: '#2563EB',
-    shadowOpacity: 0.25,
-    shadowRadius: 6,
-    elevation: 3,
   },
   goToDownloadText: {
     color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 13.5,
+    fontWeight: '700',
   },
 });

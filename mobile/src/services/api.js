@@ -244,24 +244,23 @@ export async function deleteHistoryItem(filename) {
   return { success: true };
 }
 
+export async function playVideoInApp(item) {
+  if (Platform.OS === 'android' && YoutubeDLNative && YoutubeDLNative.playVideoInApp) {
+    return await YoutubeDLNative.playVideoInApp(
+      item?.download_url || '',
+      item?.filename || '',
+      item?.title || item?.filename || 'Video',
+      item?.uploader || 'MediaToolkit'
+    );
+  }
+  return await downloadFileToDevice(item?.download_url, item?.filename, 'open');
+}
+
 export async function downloadFileToDevice(fileUrlOrPath, filename, actionType = 'open') {
-  // 1. Önce yerel Android FileProvider köprüsünü kullan (Scoped Storage & M4A MIME hatasını önler)
+  // Android üzerinde kendi MediaToolkitFileProvider köprümüzü kullan (ExpoSharing "Not allowed to read file" hatasını tamamen önler)
   if (Platform.OS === 'android' && YoutubeDLNative && YoutubeDLNative.openOrShareFile) {
-    try {
-      await YoutubeDLNative.openOrShareFile(fileUrlOrPath || '', filename || '', actionType);
-      return { success: true, uri: fileUrlOrPath };
-    } catch (nativeErr) {
-      console.warn('Native openOrShareFile uyarısı, Sharing deneniyor:', nativeErr);
-      // Eğer open başarısız olduysa share ile tekrar dene
-      if (actionType === 'open') {
-        try {
-          await YoutubeDLNative.openOrShareFile(fileUrlOrPath || '', filename || '', 'share');
-          return { success: true, uri: fileUrlOrPath };
-        } catch (shareErr) {
-          console.warn('Native share uyarısı:', shareErr);
-        }
-      }
-    }
+    await YoutubeDLNative.openOrShareFile(fileUrlOrPath || '', filename || '', actionType);
+    return { success: true, uri: fileUrlOrPath };
   }
 
   const lower = (filename || fileUrlOrPath || '').toLowerCase();
