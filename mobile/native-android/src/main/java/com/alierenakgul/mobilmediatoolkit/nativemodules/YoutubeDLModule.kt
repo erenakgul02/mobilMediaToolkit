@@ -1,9 +1,16 @@
 package com.alierenakgul.mobilmediatoolkit.nativemodules
 
 import android.app.Dialog
+import android.content.Context
 import android.content.Intent
 import android.content.pm.ActivityInfo
+import android.content.res.ColorStateList
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.CornerPathEffect
+import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
@@ -467,6 +474,152 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
         }
     }
 
+    /**
+     * Profesyonel vektörel medya ikonları çizen özel View (Emoji veya metin sembolü kullanmaz).
+     * Her ekran yoğunluğunda (DPI) jilet gibi keskin vektör çizimi yapar.
+     */
+    private inner class PlayerVectorIconView(
+        context: Context,
+        var iconType: String
+    ) : View(context) {
+
+        private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            style = Paint.Style.STROKE
+            strokeWidth = dpToPx(2).toFloat().coerceAtLeast(4f)
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
+        }
+
+        private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            style = Paint.Style.FILL
+            pathEffect = CornerPathEffect(dpToPx(2).toFloat())
+        }
+
+        private val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            textAlign = Paint.Align.CENTER
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        }
+
+        private val path = Path()
+        private val rect = RectF()
+
+        fun updateIcon(newType: String) {
+            iconType = newType
+            invalidate()
+        }
+
+        override fun onDraw(canvas: Canvas) {
+            super.onDraw(canvas)
+            val w = width.toFloat()
+            val h = height.toFloat()
+            if (w <= 0f || h <= 0f) return
+            val cx = w / 2f
+            val cy = h / 2f
+
+            when (iconType) {
+                "back" -> {
+                    // Sol ok (Arrow Left)
+                    val s = minOf(w, h) * 0.28f
+                    path.reset()
+                    path.moveTo(cx + s * 0.2f, cy - s)
+                    path.lineTo(cx - s * 0.8f, cy)
+                    path.lineTo(cx + s * 0.2f, cy + s)
+                    path.moveTo(cx - s * 0.7f, cy)
+                    path.lineTo(cx + s * 0.95f, cy)
+                    canvas.drawPath(path, strokePaint)
+                }
+
+                "play" -> {
+                    // Yuvarlatılmış köşeli Oynat üçgeni
+                    val r = minOf(w, h) * 0.30f
+                    path.reset()
+                    path.moveTo(cx - r * 0.65f, cy - r * 0.95f)
+                    path.lineTo(cx + r * 1.05f, cy)
+                    path.lineTo(cx - r * 0.65f, cy + r * 0.95f)
+                    path.close()
+                    canvas.drawPath(path, fillPaint)
+                }
+
+                "pause" -> {
+                    // İki yuvarlatılmış dikey çubuk
+                    val barW = minOf(w, h) * 0.13f
+                    val barH = minOf(w, h) * 0.52f
+                    val gap = minOf(w, h) * 0.14f
+                    val corner = barW / 2f
+
+                    rect.set(cx - gap - barW, cy - barH / 2f, cx - gap, cy + barH / 2f)
+                    canvas.drawRoundRect(rect, corner, corner, fillPaint)
+
+                    rect.set(cx + gap, cy - barH / 2f, cx + gap + barW, cy + barH / 2f)
+                    canvas.drawRoundRect(rect, corner, corner, fillPaint)
+                }
+
+                "rewind10" -> {
+                    // Çift sol ok (<<) + "10"
+                    val s = minOf(w, h) * 0.17f
+                    val topY = cy - s * 0.75f
+                    path.reset()
+                    path.moveTo(cx - s * 0.1f, topY - s * 0.75f)
+                    path.lineTo(cx - s * 0.95f, topY)
+                    path.lineTo(cx - s * 0.1f, topY + s * 0.75f)
+
+                    path.moveTo(cx + s * 0.85f, topY - s * 0.75f)
+                    path.lineTo(cx, topY)
+                    path.lineTo(cx + s * 0.85f, topY + s * 0.75f)
+                    canvas.drawPath(path, strokePaint)
+
+                    labelPaint.textSize = minOf(w, h) * 0.23f
+                    canvas.drawText("10s", cx, cy + s * 1.55f, labelPaint)
+                }
+
+                "forward10" -> {
+                    // Çift sağ ok (>>) + "10"
+                    val s = minOf(w, h) * 0.17f
+                    val topY = cy - s * 0.75f
+                    path.reset()
+                    path.moveTo(cx - s * 0.85f, topY - s * 0.75f)
+                    path.lineTo(cx, topY)
+                    path.lineTo(cx - s * 0.85f, topY + s * 0.75f)
+
+                    path.moveTo(cx + s * 0.1f, topY - s * 0.75f)
+                    path.lineTo(cx + s * 0.95f, topY)
+                    path.lineTo(cx + s * 0.1f, topY + s * 0.75f)
+                    canvas.drawPath(path, strokePaint)
+
+                    labelPaint.textSize = minOf(w, h) * 0.23f
+                    canvas.drawText("10s", cx, cy + s * 1.55f, labelPaint)
+                }
+
+                "fullscreen" -> {
+                    // 4 köşe tam ekran çerçeve ikonu
+                    val r = minOf(w, h) * 0.27f
+                    val arm = r * 0.55f
+                    path.reset()
+                    // Sol üst
+                    path.moveTo(cx - r, cy - r + arm)
+                    path.lineTo(cx - r, cy - r)
+                    path.lineTo(cx - r + arm, cy - r)
+                    // Sağ üst
+                    path.moveTo(cx + r - arm, cy - r)
+                    path.lineTo(cx + r, cy - r)
+                    path.lineTo(cx + r, cy - r + arm)
+                    // Sağ alt
+                    path.moveTo(cx + r, cy + r - arm)
+                    path.lineTo(cx + r, cy + r)
+                    path.lineTo(cx + r - arm, cy + r)
+                    // Sol alt
+                    path.moveTo(cx - r + arm, cy + r)
+                    path.lineTo(cx - r, cy + r)
+                    path.lineTo(cx - r, cy + r - arm)
+                    canvas.drawPath(path, strokePaint)
+                }
+            }
+        }
+    }
+
     private fun playVideoInAppInternal(
         targetFile: File,
         title: String,
@@ -490,6 +643,7 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
 
                 var isLandscape = false
                 var isSeeking = false
+                var controlsVisible = true
                 var durationMs = 0
                 var videoW = 16
                 var videoH = 9
@@ -541,12 +695,23 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
                     )
                 }
 
-                // Üst Başlık Çubuğu (Geri + Başlık + Döndür)
+                // Tüm Kontrolleri Taşıyan Katman (Yumuşak geçişli sinema arayüzü)
+                val overlayContainer = FrameLayout(activity).apply {
+                    layoutParams = FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT
+                    )
+                }
+
+                // 1. ÜST SİNEMA GRADYAN BARI (Geri İkonu + Başlık + Tam Ekran İkonu)
                 val topBar = LinearLayout(activity).apply {
                     orientation = LinearLayout.HORIZONTAL
                     gravity = Gravity.CENTER_VERTICAL
-                    setBackgroundColor(Color.parseColor("#CC090D16"))
-                    setPadding(dpToPx(16), dpToPx(16), dpToPx(16), dpToPx(14))
+                    background = GradientDrawable(
+                        GradientDrawable.Orientation.TOP_BOTTOM,
+                        intArrayOf(Color.parseColor("#E6000000"), Color.TRANSPARENT)
+                    )
+                    setPadding(dpToPx(18), dpToPx(18), dpToPx(18), dpToPx(28))
                     layoutParams = FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -554,16 +719,20 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
                     )
                 }
 
-                val backBtn = TextView(activity).apply {
-                    text = "← Geri"
-                    setTextColor(Color.WHITE)
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-                    typeface = Typeface.DEFAULT_BOLD
-                    setPadding(dpToPx(12), dpToPx(7), dpToPx(12), dpToPx(7))
+                val backBtnHolder = FrameLayout(activity).apply {
+                    layoutParams = LinearLayout.LayoutParams(dpToPx(42), dpToPx(42))
                     background = GradientDrawable().apply {
-                        setColor(Color.parseColor("#334155"))
-                        cornerRadius = dpToPx(8).toFloat()
+                        shape = GradientDrawable.OVAL
+                        setColor(Color.parseColor("#660F172A"))
+                        setStroke(dpToPx(1), Color.parseColor("#33FFFFFF"))
                     }
+                    addView(
+                        PlayerVectorIconView(activity, "back"),
+                        FrameLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT
+                        )
+                    )
                     setOnClickListener {
                         dialog.dismiss()
                     }
@@ -572,15 +741,15 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
                 val titleCol = LinearLayout(activity).apply {
                     orientation = LinearLayout.VERTICAL
                     layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-                        marginStart = dpToPx(12)
-                        marginEnd = dpToPx(12)
+                        marginStart = dpToPx(14)
+                        marginEnd = dpToPx(14)
                     }
                 }
 
                 val titleTv = TextView(activity).apply {
                     text = title
                     setTextColor(Color.WHITE)
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
                     typeface = Typeface.DEFAULT_BOLD
                     maxLines = 1
                     ellipsize = TextUtils.TruncateAt.END
@@ -589,7 +758,7 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
                 val subTv = TextView(activity).apply {
                     text = uploader
                     setTextColor(Color.parseColor("#94A3B8"))
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
                     maxLines = 1
                     ellipsize = TextUtils.TruncateAt.END
                 }
@@ -597,41 +766,122 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
                 titleCol.addView(titleTv)
                 titleCol.addView(subTv)
 
-                val rotateBtn = TextView(activity).apply {
-                    text = "🔄 Tam Ekran Döndür"
-                    setTextColor(Color.WHITE)
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-                    typeface = Typeface.DEFAULT_BOLD
-                    setPadding(dpToPx(12), dpToPx(7), dpToPx(12), dpToPx(7))
-                    background = GradientDrawable().apply {
-                        setColor(Color.parseColor("#0284C7"))
-                        cornerRadius = dpToPx(8).toFloat()
+                fun toggleOrientation() {
+                    isLandscape = !isLandscape
+                    activity.requestedOrientation = if (isLandscape) {
+                        ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                    } else {
+                        ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
                     }
+                    uiHandler.postDelayed({
+                        applyImmersiveFullscreen(dialog.window)
+                        applyImmersiveFullscreen(activity.window)
+                        updateVideoBounds()
+                    }, 150L)
+                }
+
+                val fullscreenTopBtn = FrameLayout(activity).apply {
+                    layoutParams = LinearLayout.LayoutParams(dpToPx(42), dpToPx(42))
+                    background = GradientDrawable().apply {
+                        shape = GradientDrawable.OVAL
+                        setColor(Color.parseColor("#660F172A"))
+                        setStroke(dpToPx(1), Color.parseColor("#33FFFFFF"))
+                    }
+                    addView(
+                        PlayerVectorIconView(activity, "fullscreen"),
+                        FrameLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT
+                        )
+                    )
                     setOnClickListener {
-                        isLandscape = !isLandscape
-                        activity.requestedOrientation = if (isLandscape) {
-                            ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-                        } else {
-                            ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-                        }
-                        uiHandler.postDelayed({
-                            applyImmersiveFullscreen(dialog.window)
-                            applyImmersiveFullscreen(activity.window)
-                            updateVideoBounds()
-                        }, 150L)
+                        toggleOrientation()
                     }
                 }
 
-                topBar.addView(backBtn)
+                topBar.addView(backBtnHolder)
                 topBar.addView(titleCol)
-                topBar.addView(rotateBtn)
-                rootLayout.addView(topBar)
+                topBar.addView(fullscreenTopBtn)
+                overlayContainer.addView(topBar)
 
-                // Alt Kontrol Çubuğu (Süre + SeekBar + -10sn / Oynat-Duraklat / +10sn)
+                // 2. MERKEZ YÜZEN OYNATMA KONTROLLERİ (YouTube / Netflix tarzı yuvarlak cam butonlar)
+                val centerControlsRow = LinearLayout(activity).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER
+                    layoutParams = FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        Gravity.CENTER
+                    )
+                }
+
+                val playPauseIconView = PlayerVectorIconView(activity, "pause")
+
+                val rwCircleBtn = FrameLayout(activity).apply {
+                    layoutParams = LinearLayout.LayoutParams(dpToPx(54), dpToPx(54)).apply {
+                        marginEnd = dpToPx(28)
+                    }
+                    background = GradientDrawable().apply {
+                        shape = GradientDrawable.OVAL
+                        setColor(Color.parseColor("#73090D16"))
+                        setStroke(dpToPx(1), Color.parseColor("#40FFFFFF"))
+                    }
+                    addView(
+                        PlayerVectorIconView(activity, "rewind10"),
+                        FrameLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT
+                        )
+                    )
+                }
+
+                val playPauseCircleBtn = FrameLayout(activity).apply {
+                    layoutParams = LinearLayout.LayoutParams(dpToPx(70), dpToPx(70))
+                    background = GradientDrawable().apply {
+                        shape = GradientDrawable.OVAL
+                        setColor(Color.parseColor("#E62563EB"))
+                        setStroke(dpToPx(2), Color.parseColor("#66FFFFFF"))
+                    }
+                    addView(
+                        playPauseIconView,
+                        FrameLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT
+                        )
+                    )
+                }
+
+                val ffCircleBtn = FrameLayout(activity).apply {
+                    layoutParams = LinearLayout.LayoutParams(dpToPx(54), dpToPx(54)).apply {
+                        marginStart = dpToPx(28)
+                    }
+                    background = GradientDrawable().apply {
+                        shape = GradientDrawable.OVAL
+                        setColor(Color.parseColor("#73090D16"))
+                        setStroke(dpToPx(1), Color.parseColor("#40FFFFFF"))
+                    }
+                    addView(
+                        PlayerVectorIconView(activity, "forward10"),
+                        FrameLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT
+                        )
+                    )
+                }
+
+                centerControlsRow.addView(rwCircleBtn)
+                centerControlsRow.addView(playPauseCircleBtn)
+                centerControlsRow.addView(ffCircleBtn)
+                overlayContainer.addView(centerControlsRow)
+
+                // 3. ALT SİNEMA GRADYAN BARI (İlerleme Çubuğu + Saniye Sayacı + Tam Ekran Butonu)
                 val bottomBar = LinearLayout(activity).apply {
                     orientation = LinearLayout.VERTICAL
-                    setBackgroundColor(Color.parseColor("#D9090D16"))
-                    setPadding(dpToPx(18), dpToPx(12), dpToPx(18), dpToPx(22))
+                    background = GradientDrawable(
+                        GradientDrawable.Orientation.BOTTOM_TOP,
+                        intArrayOf(Color.parseColor("#E6000000"), Color.TRANSPARENT)
+                    )
+                    setPadding(dpToPx(18), dpToPx(28), dpToPx(18), dpToPx(22))
                     layoutParams = FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -639,35 +889,29 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
                     )
                 }
 
-                val seekRow = LinearLayout(activity).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    gravity = Gravity.CENTER_VERTICAL
-                    layoutParams = LinearLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.WRAP_CONTENT
-                    )
-                }
-
                 val currentTimeTv = TextView(activity).apply {
                     text = "00:00"
-                    setTextColor(Color.parseColor("#E2E8F0"))
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-                    typeface = Typeface.MONOSPACE
+                    setTextColor(Color.WHITE)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+                    typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
                 }
 
                 val totalTimeTv = TextView(activity).apply {
                     text = "00:00"
                     setTextColor(Color.parseColor("#94A3B8"))
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-                    typeface = Typeface.MONOSPACE
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+                    typeface = Typeface.create(Typeface.MONOSPACE, Typeface.NORMAL)
                 }
 
                 val seekBar = SeekBar(activity).apply {
                     max = 1000
-                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-                        marginStart = dpToPx(8)
-                        marginEnd = dpToPx(8)
-                    }
+                    progressTintList = ColorStateList.valueOf(Color.parseColor("#38BDF8"))
+                    thumbTintList = ColorStateList.valueOf(Color.WHITE)
+                    progressBackgroundTintList = ColorStateList.valueOf(Color.parseColor("#4DFFFFFF"))
+                    layoutParams = LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT
+                    )
                     setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                         override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
                             if (fromUser && durationMs > 0) {
@@ -690,98 +934,90 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
                     })
                 }
 
-                seekRow.addView(currentTimeTv)
-                seekRow.addView(seekBar)
-                seekRow.addView(totalTimeTv)
-
-                val controlsRow = LinearLayout(activity).apply {
+                val bottomMetaRow = LinearLayout(activity).apply {
                     orientation = LinearLayout.HORIZONTAL
-                    gravity = Gravity.CENTER
+                    gravity = Gravity.CENTER_VERTICAL
                     layoutParams = LinearLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.WRAP_CONTENT
                     ).apply {
-                        topMargin = dpToPx(10)
+                        topMargin = dpToPx(4)
                     }
                 }
 
-                val playPauseBtn = TextView(activity).apply {
-                    text = "⏸ Duraklat"
-                    setTextColor(Color.WHITE)
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-                    typeface = Typeface.DEFAULT_BOLD
-                    gravity = Gravity.CENTER
-                    setPadding(dpToPx(24), dpToPx(10), dpToPx(24), dpToPx(10))
-                    background = GradientDrawable().apply {
-                        setColor(Color.parseColor("#0284C7"))
-                        cornerRadius = dpToPx(24).toFloat()
-                    }
+                val timeLeftContainer = LinearLayout(activity).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
                 }
 
-                val rwBtn = TextView(activity).apply {
-                    text = "⏪ -10 sn"
-                    setTextColor(Color.WHITE)
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-                    typeface = Typeface.DEFAULT_BOLD
-                    setPadding(dpToPx(14), dpToPx(9), dpToPx(14), dpToPx(9))
+                val slashTv = TextView(activity).apply {
+                    text = "  /  "
+                    setTextColor(Color.parseColor("#64748B"))
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                }
+
+                timeLeftContainer.addView(currentTimeTv)
+                timeLeftContainer.addView(slashTv)
+                timeLeftContainer.addView(totalTimeTv)
+
+                val rotatePillBtn = LinearLayout(activity).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    setPadding(dpToPx(12), dpToPx(6), dpToPx(12), dpToPx(6))
                     background = GradientDrawable().apply {
-                        setColor(Color.parseColor("#1E293B"))
-                        cornerRadius = dpToPx(18).toFloat()
+                        setColor(Color.parseColor("#33FFFFFF"))
+                        cornerRadius = dpToPx(8).toFloat()
                     }
-                    layoutParams = LinearLayout.LayoutParams(
-                        ViewGroup.LayoutParams.WRAP_CONTENT,
-                        ViewGroup.LayoutParams.WRAP_CONTENT
-                    ).apply {
-                        marginEnd = dpToPx(16)
-                    }
+                    addView(
+                        PlayerVectorIconView(activity, "fullscreen"),
+                        LinearLayout.LayoutParams(dpToPx(18), dpToPx(18)).apply {
+                            marginEnd = dpToPx(6)
+                        }
+                    )
+                    addView(
+                        TextView(activity).apply {
+                            text = "Tam Ekran"
+                            setTextColor(Color.WHITE)
+                            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
+                            typeface = Typeface.DEFAULT_BOLD
+                        }
+                    )
                     setOnClickListener {
-                        val target = (videoView.currentPosition - 10000).coerceAtLeast(0)
-                        videoView.seekTo(target)
-                        currentTimeTv.text = formatTimeMs(target)
+                        toggleOrientation()
                     }
                 }
 
-                val ffBtn = TextView(activity).apply {
-                    text = "+10 sn ⏩"
-                    setTextColor(Color.WHITE)
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-                    typeface = Typeface.DEFAULT_BOLD
-                    setPadding(dpToPx(14), dpToPx(9), dpToPx(14), dpToPx(9))
-                    background = GradientDrawable().apply {
-                        setColor(Color.parseColor("#1E293B"))
-                        cornerRadius = dpToPx(18).toFloat()
-                    }
-                    layoutParams = LinearLayout.LayoutParams(
-                        ViewGroup.LayoutParams.WRAP_CONTENT,
-                        ViewGroup.LayoutParams.WRAP_CONTENT
-                    ).apply {
-                        marginStart = dpToPx(16)
-                    }
-                    setOnClickListener {
-                        val maxPos = if (durationMs > 0) durationMs else Int.MAX_VALUE
-                        val target = (videoView.currentPosition + 10000).coerceAtMost(maxPos)
-                        videoView.seekTo(target)
-                        currentTimeTv.text = formatTimeMs(target)
-                    }
+                bottomMetaRow.addView(timeLeftContainer)
+                bottomMetaRow.addView(rotatePillBtn)
+
+                bottomBar.addView(seekBar)
+                bottomBar.addView(bottomMetaRow)
+                overlayContainer.addView(bottomBar)
+                rootLayout.addView(overlayContainer)
+
+                rwCircleBtn.setOnClickListener {
+                    val target = (videoView.currentPosition - 10000).coerceAtLeast(0)
+                    videoView.seekTo(target)
+                    currentTimeTv.text = formatTimeMs(target)
                 }
 
-                playPauseBtn.setOnClickListener {
+                ffCircleBtn.setOnClickListener {
+                    val maxPos = if (durationMs > 0) durationMs else Int.MAX_VALUE
+                    val target = (videoView.currentPosition + 10000).coerceAtMost(maxPos)
+                    videoView.seekTo(target)
+                    currentTimeTv.text = formatTimeMs(target)
+                }
+
+                playPauseCircleBtn.setOnClickListener {
                     if (videoView.isPlaying) {
                         videoView.pause()
-                        playPauseBtn.text = "▶ Oynat"
+                        playPauseIconView.updateIcon("play")
                     } else {
                         videoView.start()
-                        playPauseBtn.text = "⏸ Duraklat"
+                        playPauseIconView.updateIcon("pause")
                     }
                 }
-
-                controlsRow.addView(rwBtn)
-                controlsRow.addView(playPauseBtn)
-                controlsRow.addView(ffBtn)
-
-                bottomBar.addView(seekRow)
-                bottomBar.addView(controlsRow)
-                rootLayout.addView(bottomBar)
 
                 // Ekran boyutu veya yönü değiştiğinde (döndürüldüğünde) video oranını koruyarak yeniden boyutlandır
                 rootLayout.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
@@ -791,11 +1027,17 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
                     }
                 }
 
-                // Ekrana dokununca üst ve alt barı gizle/göster + tam ekranı koru
+                // Ekrana dokununca kontrolleri yumuşak geçişle gizle/göster + tam ekranı koru
                 videoContainer.setOnClickListener {
-                    val vis = if (topBar.visibility == View.VISIBLE) View.GONE else View.VISIBLE
-                    topBar.visibility = vis
-                    bottomBar.visibility = vis
+                    controlsVisible = !controlsVisible
+                    if (controlsVisible) {
+                        overlayContainer.visibility = View.VISIBLE
+                        overlayContainer.animate().alpha(1f).setDuration(180L).start()
+                    } else {
+                        overlayContainer.animate().alpha(0f).setDuration(180L).withEndAction {
+                            if (!controlsVisible) overlayContainer.visibility = View.GONE
+                        }.start()
+                    }
                     applyImmersiveFullscreen(dialog.window)
                 }
 
@@ -811,7 +1053,7 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
                                     }
                                 }
                             } catch (_: Exception) {}
-                            uiHandler.postDelayed(this, 400L)
+                            uiHandler.postDelayed(this, 350L)
                         }
                     }
                 }
@@ -832,15 +1074,16 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
                     totalTimeTv.text = formatTimeMs(durationMs)
                     updateVideoBounds()
                     videoView.start()
-                    playPauseBtn.text = "⏸ Duraklat"
+                    playPauseIconView.updateIcon("pause")
                     uiHandler.post(ticker)
                 }
 
                 videoView.setOnCompletionListener {
-                    playPauseBtn.text = "▶ Tekrar Oynat"
+                    playPauseIconView.updateIcon("play")
                     seekBar.progress = 1000
-                    topBar.visibility = View.VISIBLE
-                    bottomBar.visibility = View.VISIBLE
+                    controlsVisible = true
+                    overlayContainer.visibility = View.VISIBLE
+                    overlayContainer.alpha = 1f
                 }
 
                 dialog.setOnDismissListener {

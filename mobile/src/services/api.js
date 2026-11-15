@@ -4,25 +4,138 @@ import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 
 const LOCAL_HISTORY_KEY = '@mobil_media_toolkit_local_downloads';
+const PLAYLISTS_STORAGE_KEY = '@mobil_media_toolkit_playlists';
+const THEME_STORAGE_KEY = '@mobil_media_toolkit_theme';
+
 const YoutubeDLNative = NativeModules.YoutubeDLNative;
 
-// Yerel (Native) görev durumu takipçisi
+// Yerel (Native) görev durumu ve sıralı indirme kuyruğu takipçisi
 const nativeTasks = {};
+const downloadQueue = [];
+const taskOrderList = [];
+let currentActiveTaskId = null;
+let isProcessingQueue = false;
 
 // Android Kotlin motorundan gelen indirme ilerleme olaylarını dinle
 if (Platform.OS === 'android') {
   DeviceEventEmitter.addListener('onNativeDownloadProgress', (event) => {
     const { progress, eta, line } = event;
-    const activeId = Object.keys(nativeTasks).find(
-      (id) => nativeTasks[id].status === 'downloading'
-    );
+    const activeId =
+      currentActiveTaskId ||
+      Object.keys(nativeTasks).find((id) => nativeTasks[id].status === 'downloading');
     if (activeId && nativeTasks[activeId]) {
       nativeTasks[activeId].progress = Math.round(progress);
       nativeTasks[activeId].eta = eta && eta > 0 ? `${Math.round(eta)}s` : '';
-      nativeTasks[activeId].speed = line ? line.slice(0, 35) : '';
+      nativeTasks[activeId].speed = line ? line.slice(0, 38) : '';
     }
   });
 }
+
+// ==========================================
+// GECE MODU (TEMA) YÖNETİMİ
+// ==========================================
+
+export async function getThemeMode() {
+  try {
+    const val = await AsyncStorage.getItem(THEME_STORAGE_KEY);
+    return val === 'dark';
+  } catch (e) {
+    return false;
+  }
+}
+
+export async function setThemeMode(isDark) {
+  try {
+    await AsyncStorage.setItem(THEME_STORAGE_KEY, isDark ? 'dark' : 'light');
+  } catch (e) {
+    console.warn('Tema tercihi kaydedilemedi:', e);
+  }
+}
+
+// ==========================================
+// ÖZEL ÇALMA LİSTELERİ (PLAYLIST) YÖNETİMİ
+// ==========================================
+
+export async function getPlaylists() {
+  try {
+    const raw = await AsyncStorage.getItem(PLAYLISTS_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch (e) {
+    console.warn('Çalma listeleri okunamadı:', e);
+  }
+  return [];
+}
+
+async function savePlaylists(list) {
+  try {
+    await AsyncStorage.setItem(PLAYLISTS_STORAGE_KEY, JSON.stringify(list));
+  } catch (e) {
+    console.warn('Çalma listeleri kaydedilemedi:', e);
+  }
+}
+
+export async function createPlaylist(name, initialTrackFilenames = []) {
+  const cleanName = (name || '').trim();
+  if (!cleanName) {
+    throw new Error('Lütfen çalma listesi için bir isim girin.');
+  }
+  const existing = await getPlaylists();
+  const newPlaylist = {
+    id: `pl_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    name: cleanName,
+    createdAt: new Date().toISOString(),
+    trackFilenames: Array.from(new Set(initialTrackFilenames.filter(Boolean))),
+  };
+  const updated = [newPlaylist, ...existing];
+  await savePlaylists(updated);
+  return { playlist: newPlaylist, playlists: updated };
+}
+
+export async function deletePlaylist(playlistId) {
+  const existing = await getPlaylists();
+  const updated = existing.filter((p) => p.id !== playlistId);
+  await savePlaylists(updated);
+  return updated;
+}
+
+export async function renamePlaylist(playlistId, newName) {
+  const cleanName = (newName || '').trim();
+  if (!cleanName) {
+    throw new Error('Lütfen çalma listesi için geçerli bir isim girin.');
+  }
+  const existing = await getPlaylists();
+  const updated = existing.map((pl) =>
+    pl.id === playlistId ? { ...pl, name: cleanName } : pl
+  );
+  await savePlaylists(updated);
+  return updated;
+}
+
+export async function toggleTrackInPlaylist(playlistId, filename) {
+  if (!playlistId || !filename) return await getPlaylists();
+  const existing = await getPlaylists();
+  const updated = existing.map((pl) => {
+    if (pl.id !== playlistId) return pl;
+    const current = Array.isArray(pl.trackFilenames) ? pl.trackFilenames : [];
+    const exists = current.includes(filename);
+    const nextTracks = exists
+      ? current.filter((f) => f !== filename)
+      : [...current, filename];
+    return {
+      ...pl,
+      trackFilenames: nextTracks,
+    };
+  });
+  await savePlaylists(updated);
+  return updated;
+}
+
+// ==========================================
+// YARDIMCI FORMAT FONKSİYONLARI
+// ==========================================
 
 function normalizeUrl(rawUrl) {
   let u = (rawUrl || '').trim();
@@ -33,7 +146,6 @@ function normalizeUrl(rawUrl) {
   if (u.includes('youtube.com') || u.includes('youtu.be')) {
     return 'https://' + u;
   }
-  // Video veya Shorts ID
   return 'https://www.youtube.com/watch?v=' + u;
 }
 
@@ -73,7 +185,6 @@ export function isLikelyYouTubeUrl(rawInput) {
   if (!s) return false;
   if (s.startsWith('http://') || s.startsWith('https://')) return true;
   if (s.includes('youtube.com/') || s.includes('youtu.be/')) return true;
-  // 11 karakterlik tek kelimeli YouTube Video ID kontrolü
   if (/^[a-zA-Z0-9_-]{11}$/.test((rawInput || '').trim())) return true;
   return false;
 }
@@ -146,7 +257,19 @@ export async function deleteLocalHistoryItem(filename, fileUrlOrPath = '') {
       }
     }
 
-    // 2. Uygulama içi geçmiş listesinden kaldır
+    // 2. Çalma listelerinde bu dosya varsa temizle
+    try {
+      const playlists = await getPlaylists();
+      const updatedPlaylists = playlists.map((pl) => ({
+        ...pl,
+        trackFilenames: (pl.trackFilenames || []).filter((f) => f !== filename),
+      }));
+      await savePlaylists(updatedPlaylists);
+    } catch (plErr) {
+      console.warn('Playlist temizleme uyarısı:', plErr);
+    }
+
+    // 3. Uygulama içi geçmiş listesinden kaldır
     const updated = existing.filter((i) => i.filename !== filename);
     await AsyncStorage.setItem(LOCAL_HISTORY_KEY, JSON.stringify(updated));
     return updated;
@@ -166,7 +289,7 @@ export async function fetchVideoInfo(url) {
     throw new Error('Lütfen bir YouTube linki yapıştırın.');
   }
 
-  // 1. Önce Cihaz İçi NewPipeExtractor Motoru (Tam süre, kanal, görüntülenme ve çözünürlük bilgisi)
+  // 1. Önce Cihaz İçi NewPipeExtractor Motoru
   if (YoutubeDLNative && YoutubeDLNative.getVideoInfo) {
     try {
       const nativeData = await YoutubeDLNative.getVideoInfo(cleanUrl);
@@ -211,21 +334,91 @@ export async function fetchVideoInfo(url) {
   throw new Error('Video bilgileri alınamadı. Lütfen geçerli bir YouTube video linki yapıştırın.');
 }
 
+// ==========================================
+// SIRALI İNDİRME KUYRUĞU (BEKLEYEN İNDİRMELER)
+// ==========================================
+
+async function processDownloadQueue() {
+  if (isProcessingQueue) return;
+  isProcessingQueue = true;
+
+  while (downloadQueue.length > 0) {
+    const nextTaskId = downloadQueue.shift();
+    const task = nativeTasks[nextTaskId];
+    if (!task || task.status === 'cancelled') {
+      continue;
+    }
+
+    currentActiveTaskId = nextTaskId;
+    task.status = 'downloading';
+    task.progress = 0;
+    task.speed = 'Başlatılıyor...';
+    task.eta = '';
+
+    try {
+      const result = await YoutubeDLNative.download(
+        task.cleanUrl,
+        task.type,
+        task.quality
+      );
+      const actualFilename = result.fileName || task.filename;
+      const downloadUrl = result.filePath
+        ? `file://${result.filePath}`
+        : result.outputDir
+        ? `file://${result.outputDir}/${actualFilename}`
+        : '';
+      const filesize = result.fileSize || '';
+
+      task.status = 'completed';
+      task.progress = 100;
+      task.filename = actualFilename;
+      task.download_url = downloadUrl;
+      task.filesize = filesize;
+      task.speed = 'Tamamlandı';
+      task.eta = '';
+
+      await addLocalHistoryItem({
+        id: nextTaskId,
+        filename: actualFilename,
+        title: task.title || 'YouTube Medya',
+        uploader: task.uploader || 'YouTube',
+        thumbnail: task.thumbnail || '',
+        type: task.type,
+        quality: task.quality,
+        filesize: filesize,
+        download_url: downloadUrl,
+        date: 'Bugün',
+        createdAt: new Date().toISOString(),
+      });
+    } catch (err) {
+      console.error('Native indirme hatası:', err);
+      task.status = 'failed';
+      task.error =
+        (err && (err.message || err.toString())) || 'Yerel indirme başarısız oldu.';
+    }
+
+    currentActiveTaskId = null;
+  }
+
+  isProcessingQueue = false;
+}
+
 export async function startDownload({ url, type, quality, title, thumbnail, uploader }) {
   const cleanUrl = normalizeUrl(url);
   const isAudio = type === 'm4a' || type === 'mp3';
   const ext = isAudio ? 'm4a' : 'mp4';
 
-  // Yerel Android Motoru (NewPipeExtractor)
   if (YoutubeDLNative && YoutubeDLNative.download) {
-    const taskId = `native_${Date.now()}`;
+    const taskId = `native_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     const defaultFilename = `${(title || 'YouTube_Medya').replace(/[\\/:*?"<>|]/g, '_')}.${ext}`;
+    const wasBusy = isProcessingQueue || downloadQueue.length > 0;
 
     nativeTasks[taskId] = {
       id: taskId,
-      status: 'downloading',
+      cleanUrl,
+      status: 'queued',
       progress: 0,
-      speed: 'Başlatılıyor...',
+      speed: wasBusy ? 'Sırada bekliyor...' : 'Başlatılıyor...',
       eta: '',
       title: title || 'YouTube Medya',
       uploader: uploader || 'YouTube',
@@ -236,44 +429,14 @@ export async function startDownload({ url, type, quality, title, thumbnail, uplo
       download_url: '',
       filesize: '',
       isNative: true,
+      createdAt: Date.now(),
     };
 
-    (async () => {
-      try {
-        const result = await YoutubeDLNative.download(cleanUrl, isAudio ? 'm4a' : 'mp4', quality);
-        const actualFilename = result.fileName || defaultFilename;
-        const downloadUrl = result.filePath
-          ? `file://${result.filePath}`
-          : (result.outputDir ? `file://${result.outputDir}/${actualFilename}` : '');
-        const filesize = result.fileSize || '';
+    taskOrderList.unshift(taskId);
+    downloadQueue.push(taskId);
+    processDownloadQueue();
 
-        nativeTasks[taskId].status = 'completed';
-        nativeTasks[taskId].progress = 100;
-        nativeTasks[taskId].filename = actualFilename;
-        nativeTasks[taskId].download_url = downloadUrl;
-        nativeTasks[taskId].filesize = filesize;
-
-        await addLocalHistoryItem({
-          id: taskId,
-          filename: actualFilename,
-          title: title || 'YouTube Medya',
-          uploader: uploader || 'YouTube',
-          thumbnail: thumbnail || '',
-          type: isAudio ? 'm4a' : 'mp4',
-          quality: quality,
-          filesize: filesize,
-          download_url: downloadUrl,
-          date: 'Bugün',
-          createdAt: new Date().toISOString(),
-        });
-      } catch (err) {
-        console.error('Native indirme hatası:', err);
-        nativeTasks[taskId].status = 'failed';
-        nativeTasks[taskId].error = (err && (err.message || err.toString())) || 'Yerel indirme başarısız oldu.';
-      }
-    })();
-
-    return { taskId };
+    return { taskId, queued: wasBusy };
   }
 
   throw new Error('Cihaz içi indirme motoru bulunamadı. Lütfen güncel APK dosyasını yükleyin.');
@@ -281,9 +444,59 @@ export async function startDownload({ url, type, quality, title, thumbnail, uplo
 
 export async function checkProgress(taskId) {
   if (nativeTasks[taskId]) {
-    return { ...nativeTasks[taskId] };
+    const t = nativeTasks[taskId];
+    const queueIndex = downloadQueue.indexOf(taskId);
+    return {
+      ...t,
+      queuePosition: queueIndex >= 0 ? queueIndex + 1 : 0,
+    };
   }
   return { status: 'failed', error: 'Görev bulunamadı.' };
+}
+
+export function getDownloadQueueState() {
+  const tasks = [];
+  for (const id of taskOrderList) {
+    const t = nativeTasks[id];
+    if (!t || t.status === 'cancelled') continue;
+    const queueIndex = downloadQueue.indexOf(id);
+    tasks.push({
+      ...t,
+      queuePosition: queueIndex >= 0 ? queueIndex + 1 : 0,
+    });
+  }
+  return {
+    isBusy: isProcessingQueue || downloadQueue.length > 0,
+    activeCount: isProcessingQueue ? 1 : 0,
+    queuedCount: downloadQueue.length,
+    tasks,
+  };
+}
+
+export function cancelQueuedDownload(taskId) {
+  const idx = downloadQueue.indexOf(taskId);
+  if (idx >= 0) {
+    downloadQueue.splice(idx, 1);
+  }
+  if (nativeTasks[taskId] && nativeTasks[taskId].status === 'queued') {
+    nativeTasks[taskId].status = 'cancelled';
+  }
+  const orderIdx = taskOrderList.indexOf(taskId);
+  if (orderIdx >= 0) {
+    taskOrderList.splice(orderIdx, 1);
+  }
+  return getDownloadQueueState();
+}
+
+export function clearCompletedDownloadsFromQueue() {
+  for (let i = taskOrderList.length - 1; i >= 0; i--) {
+    const id = taskOrderList[i];
+    const t = nativeTasks[id];
+    if (!t || t.status === 'completed' || t.status === 'failed' || t.status === 'cancelled') {
+      taskOrderList.splice(i, 1);
+    }
+  }
+  return getDownloadQueueState();
 }
 
 export async function fetchHistory() {
@@ -308,7 +521,6 @@ export async function playVideoInApp(item) {
 }
 
 export async function downloadFileToDevice(fileUrlOrPath, filename, actionType = 'open') {
-  // Android üzerinde kendi MediaToolkitFileProvider köprümüzü kullan (ExpoSharing "Not allowed to read file" hatasını tamamen önler)
   if (Platform.OS === 'android' && YoutubeDLNative && YoutubeDLNative.openOrShareFile) {
     await YoutubeDLNative.openOrShareFile(fileUrlOrPath || '', filename || '', actionType);
     return { success: true, uri: fileUrlOrPath };

@@ -27,6 +27,8 @@ import {
   stopAudioPlayer,
   seekAudioTo,
   downloadFileToDevice,
+  getThemeMode,
+  setThemeMode,
 } from './src/services/api';
 
 function formatMs(ms) {
@@ -38,6 +40,7 @@ function formatMs(ms) {
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('downloader');
+  const [isDarkMode, setIsDarkMode] = useState(false);
   const [expandedPlayerVisible, setExpandedPlayerVisible] = useState(false);
   const [seekBarWidth, setSeekBarWidth] = useState(1);
 
@@ -85,6 +88,11 @@ export default function App() {
   });
 
   useEffect(() => {
+    // Kayıtlı Gece Modu tercihini yükle
+    getThemeMode()
+      .then((dark) => setIsDarkMode(Boolean(dark)))
+      .catch(() => {});
+
     // Uygulama açıldığında yerel motoru (NewPipeExtractor) hazırla
     if (NativeModules.YoutubeDLNative && NativeModules.YoutubeDLNative.initEngine) {
       NativeModules.YoutubeDLNative.initEngine().catch((err) => {
@@ -119,6 +127,14 @@ export default function App() {
     };
   }, []);
 
+  const handleToggleDarkMode = () => {
+    setIsDarkMode((prev) => {
+      const next = !prev;
+      setThemeMode(next);
+      return next;
+    });
+  };
+
   const progressRatio =
     playerState.durationMs > 0
       ? Math.min(1, Math.max(0, playerState.positionMs / playerState.durationMs))
@@ -141,36 +157,79 @@ export default function App() {
   };
 
   return (
-    <SafeAreaView style={styles.safeContainer}>
-      <StatusBar style="dark" />
+    <SafeAreaView
+      style={[
+        styles.safeContainer,
+        isDarkMode && styles.safeContainerDark,
+      ]}
+    >
+      <StatusBar style={isDarkMode ? 'light' : 'dark'} />
 
       {/* Üst Başlık Çubuğu */}
-      <View style={styles.topHeader}>
+      <View
+        style={[
+          styles.topHeader,
+          isDarkMode && styles.topHeaderDark,
+        ]}
+      >
         <View style={styles.logoRow}>
-          <View style={styles.logoBadge}>
+          <View
+            style={[
+              styles.logoBadge,
+              isDarkMode && styles.logoBadgeDark,
+            ]}
+          >
             <Image
               source={require('./assets/app-logo.png')}
               style={styles.logoImage}
               resizeMode="contain"
             />
           </View>
-          <Text style={styles.brandTitle}>MediaToolkit</Text>
+          <Text
+            style={[
+              styles.brandTitle,
+              isDarkMode && styles.brandTitleDark,
+            ]}
+          >
+            MediaToolkit
+          </Text>
         </View>
 
-        <View style={styles.headerRightBadge}>
-          <View style={styles.statusDot} />
-          <Text style={styles.statusBadgeText}>Hazır</Text>
-        </View>
+        {/* Sağ Üst: Gece / Gündüz Modu Geçiş Butonu */}
+        <TouchableOpacity
+          style={[
+            styles.themeToggleBtn,
+            isDarkMode && styles.themeToggleBtnDark,
+          ]}
+          activeOpacity={0.75}
+          onPress={handleToggleDarkMode}
+        >
+          <Ionicons
+            name={isDarkMode ? 'sunny' : 'moon'}
+            size={14}
+            color={isDarkMode ? '#FBBF24' : '#334155'}
+          />
+          <Text
+            style={[
+              styles.themeToggleText,
+              isDarkMode && styles.themeToggleTextDark,
+            ]}
+          >
+            {isDarkMode ? 'Gündüz' : 'Gece Modu'}
+          </Text>
+        </TouchableOpacity>
       </View>
 
       {/* Ana Gövde (Aktif Ekran) */}
       <View style={styles.tabContentArea}>
         {activeTab === 'downloader' ? (
           <DownloaderTab
+            isDarkMode={isDarkMode}
             onSwitchToHistory={() => setActiveTab('history')}
           />
         ) : (
           <HistoryTab
+            isDarkMode={isDarkMode}
             onSwitchToDownloader={() => setActiveTab('downloader')}
             playerState={playerState}
             onOpenExpandedPlayer={() => setExpandedPlayerVisible(true)}
@@ -269,24 +328,40 @@ export default function App() {
         </View>
       )}
 
-      {/* Alt Navigasyon Çubuğu (Telefon Sistem Tuşlarıyla Çakışmaması İçin Yükseltilmiş) */}
-      <View style={styles.bottomNav}>
+      {/* Alt Navigasyon Çubuğu */}
+      <View
+        style={[
+          styles.bottomNav,
+          isDarkMode && styles.bottomNavDark,
+        ]}
+      >
         <TouchableOpacity
           style={[
             styles.navItem,
-            activeTab === 'downloader' && styles.navItemActive,
+            activeTab === 'downloader' &&
+              (isDarkMode ? styles.navItemActiveDark : styles.navItemActive),
           ]}
           onPress={() => setActiveTab('downloader')}
         >
           <Ionicons
             name={activeTab === 'downloader' ? 'download' : 'download-outline'}
             size={21}
-            color={activeTab === 'downloader' ? '#2563EB' : '#64748B'}
+            color={
+              activeTab === 'downloader'
+                ? isDarkMode
+                  ? '#60A5FA'
+                  : '#2563EB'
+                : isDarkMode
+                ? '#94A3B8'
+                : '#64748B'
+            }
           />
           <Text
             style={[
               styles.navLabel,
-              activeTab === 'downloader' && styles.navLabelActive,
+              isDarkMode && styles.navLabelDark,
+              activeTab === 'downloader' &&
+                (isDarkMode ? styles.navLabelActiveDark : styles.navLabelActive),
             ]}
           >
             İndir
@@ -296,19 +371,30 @@ export default function App() {
         <TouchableOpacity
           style={[
             styles.navItem,
-            activeTab === 'history' && styles.navItemActive,
+            activeTab === 'history' &&
+              (isDarkMode ? styles.navItemActiveDark : styles.navItemActive),
           ]}
           onPress={() => setActiveTab('history')}
         >
           <Ionicons
             name={activeTab === 'history' ? 'musical-notes' : 'musical-notes-outline'}
             size={21}
-            color={activeTab === 'history' ? '#2563EB' : '#64748B'}
+            color={
+              activeTab === 'history'
+                ? isDarkMode
+                  ? '#60A5FA'
+                  : '#2563EB'
+                : isDarkMode
+                ? '#94A3B8'
+                : '#64748B'
+            }
           />
           <Text
             style={[
               styles.navLabel,
-              activeTab === 'history' && styles.navLabelActive,
+              isDarkMode && styles.navLabelDark,
+              activeTab === 'history' &&
+                (isDarkMode ? styles.navLabelActiveDark : styles.navLabelActive),
             ]}
           >
             İndirilenler
@@ -486,20 +572,30 @@ const styles = StyleSheet.create({
   safeContainer: {
     flex: 1,
     backgroundColor: '#F8FAFC',
-    paddingTop: Platform.OS === 'android' ? RNStatusBar.currentHeight : 0,
+    paddingTop:
+      Platform.OS === 'android'
+        ? Math.max(0, (RNStatusBar.currentHeight || 20) - 8)
+        : 0,
     width: '100%',
     height: '100%',
     ...(Platform.OS === 'web' ? { minHeight: '100vh' } : {}),
+  },
+  safeContainerDark: {
+    backgroundColor: '#0B0F19',
   },
   topHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingVertical: 11,
+    paddingVertical: 7,
     borderBottomWidth: 1,
     borderBottomColor: '#E2E8F0',
     backgroundColor: '#FFFFFF',
+  },
+  topHeaderDark: {
+    backgroundColor: '#111827',
+    borderBottomColor: '#1E293B',
   },
   logoRow: {
     flexDirection: 'row',
@@ -517,6 +613,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E2E8F0',
   },
+  logoBadgeDark: {
+    backgroundColor: '#1E293B',
+    borderColor: '#334155',
+  },
   logoImage: {
     width: 24,
     height: 24,
@@ -527,27 +627,31 @@ const styles = StyleSheet.create({
     color: '#0F172A',
     letterSpacing: -0.4,
   },
-  headerRightBadge: {
+  brandTitleDark: {
+    color: '#F8FAFC',
+  },
+  themeToggleBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: '#F0FDF4',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 11,
+    paddingVertical: 5,
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: '#BBF7D0',
+    borderColor: '#CBD5E1',
   },
-  statusDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 4,
-    backgroundColor: '#16A34A',
+  themeToggleBtnDark: {
+    backgroundColor: '#1E293B',
+    borderColor: '#334155',
   },
-  statusBadgeText: {
-    fontSize: 11,
+  themeToggleText: {
+    fontSize: 11.5,
     fontWeight: '700',
-    color: '#16A34A',
+    color: '#334155',
+  },
+  themeToggleTextDark: {
+    color: '#F8FAFC',
   },
   tabContentArea: {
     flex: 1,
@@ -657,9 +761,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderTopWidth: 1,
     borderTopColor: '#E2E8F0',
-    paddingTop: 8,
-    // Android telefon sistem tuşlarıyla (Geri / Ana Ekran / Son Uygulamalar) çakışmaması için güvenli alt boşluk
-    paddingBottom: Platform.OS === 'android' ? 48 : 20,
+    paddingTop: 6,
+    paddingBottom: Platform.OS === 'android' ? 24 : 14,
     paddingHorizontal: 24,
     justifyContent: 'space-around',
     alignItems: 'center',
@@ -669,25 +772,39 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     elevation: 10,
   },
+  bottomNavDark: {
+    backgroundColor: '#111827',
+    borderTopColor: '#1E293B',
+  },
   navItem: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 7,
-    paddingVertical: 8,
+    paddingVertical: 6,
     paddingHorizontal: 24,
     borderRadius: 12,
   },
   navItemActive: {
     backgroundColor: '#EFF6FF',
   },
+  navItemActiveDark: {
+    backgroundColor: '#1E293B',
+  },
   navLabel: {
     fontSize: 13,
     color: '#64748B',
     fontWeight: '600',
   },
+  navLabelDark: {
+    color: '#94A3B8',
+  },
   navLabelActive: {
     color: '#2563EB',
+    fontWeight: '800',
+  },
+  navLabelActiveDark: {
+    color: '#60A5FA',
     fontWeight: '800',
   },
   // BÜYÜK TAM EKRAN MÜZİK ÇALAR MODAL STİLLERİ

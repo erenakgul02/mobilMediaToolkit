@@ -18,11 +18,13 @@ import {
   searchYouTubeVideos,
   isLikelyYouTubeUrl,
   startDownload,
-  checkProgress,
+  getDownloadQueueState,
+  cancelQueuedDownload,
+  clearCompletedDownloadsFromQueue,
   downloadFileToDevice,
 } from '../services/api';
 
-export default function DownloaderTab({ onSwitchToHistory }) {
+export default function DownloaderTab({ isDarkMode, onSwitchToHistory }) {
   const [queryOrUrl, setQueryOrUrl] = useState('');
   const [loadingInfo, setLoadingInfo] = useState(false);
   const [searchResults, setSearchResults] = useState([]);
@@ -34,14 +36,24 @@ export default function DownloaderTab({ onSwitchToHistory }) {
   const [mediaType, setMediaType] = useState('m4a');
   const [selectedQuality, setSelectedQuality] = useState('high');
 
-  // Active Download state
-  const [activeTask, setActiveTask] = useState(null);
-  const [downloading, setDownloading] = useState(false);
-  const [savingToDevice, setSavingToDevice] = useState(false);
+  // Download Queue & Progress state
+  const [queueState, setQueueState] = useState(() => getDownloadQueueState());
+  const [savingTaskId, setSavingTaskId] = useState(null);
   const pollTimerRef = useRef(null);
   const urlInputRef = useRef(null);
 
+  const syncQueueState = () => {
+    const st = getDownloadQueueState();
+    setQueueState(st);
+    return st;
+  };
+
   useEffect(() => {
+    syncQueueState();
+    pollTimerRef.current = setInterval(() => {
+      syncQueueState();
+    }, 450);
+
     return () => {
       if (pollTimerRef.current) clearInterval(pollTimerRef.current);
     };
@@ -147,10 +159,9 @@ export default function DownloaderTab({ onSwitchToHistory }) {
     const targetUrl = (selectedVideoUrl || queryOrUrl).trim();
     if (!targetUrl) return;
     setErrorMsg('');
-    setDownloading(true);
 
     try {
-      const res = await startDownload({
+      await startDownload({
         url: targetUrl,
         type: mediaType,
         quality: selectedQuality,
@@ -158,82 +169,72 @@ export default function DownloaderTab({ onSwitchToHistory }) {
         thumbnail: videoInfo?.thumbnail || '',
         uploader: videoInfo?.channel || videoInfo?.author || 'YouTube',
       });
-
-      const taskId = res.taskId;
-      setActiveTask({
-        id: taskId,
-        status: 'downloading',
-        progress: 0,
-        speed: 'Başlatılıyor...',
-        eta: '',
-        type: mediaType,
-        title: videoInfo?.title || 'İndiriliyor...',
-        filename: null,
-        download_url: '',
-      });
-
-      if (pollTimerRef.current) clearInterval(pollTimerRef.current);
-      pollTimerRef.current = setInterval(async () => {
-        try {
-          const taskData = await checkProgress(taskId);
-          setActiveTask(taskData);
-
-          if (taskData.status === 'completed' || taskData.status === 'failed') {
-            clearInterval(pollTimerRef.current);
-            setDownloading(false);
-            if (taskData.status === 'failed') {
-              setErrorMsg(taskData.error || 'İndirme sırasında bir hata oluştu.');
-            }
-          }
-        } catch (e) {
-          console.warn('Progress poll hatası:', e);
-        }
-      }, 500);
+      syncQueueState();
     } catch (err) {
       setErrorMsg(err.message || 'İndirme başlatılamadı.');
-      setDownloading(false);
     }
   };
 
-  const handleSaveToDevice = async () => {
-    if (!activeTask || !activeTask.filename) return;
-    setSavingToDevice(true);
+  const handleCancelQueued = (taskId) => {
+    const nextState = cancelQueuedDownload(taskId);
+    setQueueState(nextState);
+  };
+
+  const handleClearFinished = () => {
+    const nextState = clearCompletedDownloadsFromQueue();
+    setQueueState(nextState);
+  };
+
+  const handleSaveToDevice = async (task) => {
+    if (!task || !task.filename) return;
+    setSavingTaskId(task.id);
     try {
-      await downloadFileToDevice(activeTask.download_url || '', activeTask.filename, 'open');
+      await downloadFileToDevice(task.download_url || '', task.filename, 'open');
     } catch (err) {
       Alert.alert('Hata', 'Dosya açılamadı: ' + err.message);
     } finally {
-      setSavingToDevice(false);
+      setSavingTaskId(null);
     }
   };
 
+  const hasFinishedTasks = queueState.tasks.some(
+    (t) => t.status === 'completed' || t.status === 'failed'
+  );
+
   return (
     <ScrollView
-      style={styles.container}
+      style={[styles.container, isDarkMode && styles.containerDark]}
       contentContainerStyle={styles.contentContainer}
       showsVerticalScrollIndicator={false}
       keyboardShouldPersistTaps="handled"
     >
       {/* Başlık & Slogan */}
       <View style={styles.headerArea}>
-        <Text style={styles.appTitle}>YouTube Arama & Medya İndirici</Text>
-        <Text style={styles.appSubtitle}>
-          İstediğiniz şarkı veya videoyu doğrudan aratıp yüksek kalitede M4A (Ses) veya Full HD MP4 (Video) olarak indirin.
+        <Text style={[styles.appTitle, isDarkMode && styles.textPrimaryDark]}>
+          YouTube Arama & Medya İndirici
+        </Text>
+        <Text style={[styles.appSubtitle, isDarkMode && styles.textSecondaryDark]}>
+          İstediğiniz şarkı veya videoyu doğrudan aratıp yüksek kalitede M4A (Ses) veya Full HD MP4 (Video) olarak indirin. Birden fazla medyayı arka arkaya sıraya ekleyebilirsiniz.
         </Text>
       </View>
 
       {/* Arama Motoru & URL Giriş Kartı */}
-      <View style={styles.card}>
-        <Text style={styles.inputLabel}>
+      <View style={[styles.card, isDarkMode && styles.cardDark]}>
+        <Text style={[styles.inputLabel, isDarkMode && styles.textPrimaryDark]}>
           YouTube'da Şarkı / Video Ara veya Link Yapıştır
         </Text>
-        <View style={styles.inputWrapper}>
-          <Ionicons name="search-outline" size={20} color="#2563EB" style={styles.linkIcon} />
+        <View style={[styles.inputWrapper, isDarkMode && styles.inputWrapperDark]}>
+          <Ionicons
+            name="search-outline"
+            size={20}
+            color={isDarkMode ? '#60A5FA' : '#2563EB'}
+            style={styles.linkIcon}
+          />
           <TextInput
             ref={urlInputRef}
-            style={styles.textInput}
+            style={[styles.textInput, isDarkMode && styles.textPrimaryDark]}
             placeholder="Şarkı/sanatçı adı yazın veya link yapıştırın..."
-            placeholderTextColor="#64748B"
+            placeholderTextColor={isDarkMode ? '#64748B' : '#64748B'}
             value={queryOrUrl}
             onChangeText={(txt) => {
               setQueryOrUrl(txt);
@@ -260,9 +261,18 @@ export default function DownloaderTab({ onSwitchToHistory }) {
 
         {/* Butonlar: Panodan Yapıştır & Ara / Analiz Et */}
         <View style={styles.inputButtonsRow}>
-          <TouchableOpacity style={styles.pasteBtn} onPress={handlePaste}>
-            <Ionicons name="clipboard-outline" size={16} color="#334155" />
-            <Text style={styles.pasteBtnText}>Link Yapıştır</Text>
+          <TouchableOpacity
+            style={[styles.pasteBtn, isDarkMode && styles.pasteBtnDark]}
+            onPress={handlePaste}
+          >
+            <Ionicons
+              name="clipboard-outline"
+              size={16}
+              color={isDarkMode ? '#E2E8F0' : '#334155'}
+            />
+            <Text style={[styles.pasteBtnText, isDarkMode && styles.textPrimaryDark]}>
+              Link Yapıştır
+            </Text>
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -276,7 +286,7 @@ export default function DownloaderTab({ onSwitchToHistory }) {
               <>
                 <Ionicons name="search" size={16} color="#FFFFFF" />
                 <Text style={styles.fetchBtnText}>
-                  {isLikelyYouTubeUrl(queryOrUrl) ? 'Analiz Et' : 'YouTube\'da Ara'}
+                  {isLikelyYouTubeUrl(queryOrUrl) ? 'Analiz Et' : "YouTube'da Ara"}
                 </Text>
               </>
             )}
@@ -285,31 +295,33 @@ export default function DownloaderTab({ onSwitchToHistory }) {
 
         {/* Hata Mesajı */}
         {errorMsg ? (
-          <View style={styles.errorBox}>
+          <View style={[styles.errorBox, isDarkMode && styles.errorBoxDark]}>
             <Ionicons name="alert-circle" size={18} color="#EF4444" />
             <Text style={styles.errorText}>{errorMsg}</Text>
           </View>
         ) : null}
       </View>
 
-      {/* YouTube Arama Sonuçları Listesi (Kullanıcı bir video seçmediyse gösterilir) */}
+      {/* YouTube Arama Sonuçları Listesi */}
       {!videoInfo && searchResults.length > 0 && (
-        <View style={styles.card}>
+        <View style={[styles.card, isDarkMode && styles.cardDark]}>
           <View style={styles.searchResultsHeader}>
             <View style={styles.searchHeaderLeft}>
               <Ionicons name="logo-youtube" size={18} color="#EF4444" />
-              <Text style={styles.searchResultsTitle}>
+              <Text style={[styles.searchResultsTitle, isDarkMode && styles.textPrimaryDark]}>
                 Arama Sonuçları ({searchResults.length})
               </Text>
             </View>
-            <Text style={styles.searchResultsHint}>İndirmek için dokunun</Text>
+            <Text style={[styles.searchResultsHint, isDarkMode && styles.textSecondaryDark]}>
+              Seçmek için dokunun
+            </Text>
           </View>
 
           <View style={styles.searchResultsList}>
             {searchResults.map((item) => (
               <TouchableOpacity
                 key={item.id}
-                style={styles.searchResultRow}
+                style={[styles.searchResultRow, isDarkMode && styles.searchResultRowDark]}
                 activeOpacity={0.75}
                 onPress={() => handleSelectSearchResult(item)}
               >
@@ -333,17 +345,27 @@ export default function DownloaderTab({ onSwitchToHistory }) {
                 </View>
 
                 <View style={styles.searchResultMeta}>
-                  <Text style={styles.searchResultItemTitle} numberOfLines={2}>
+                  <Text
+                    style={[styles.searchResultItemTitle, isDarkMode && styles.textPrimaryDark]}
+                    numberOfLines={2}
+                  >
                     {item.title}
                   </Text>
-                  <Text style={styles.searchResultSub} numberOfLines={1}>
+                  <Text
+                    style={[styles.searchResultSub, isDarkMode && styles.textSecondaryDark]}
+                    numberOfLines={1}
+                  >
                     {item.channel}
                     {item.view_count ? ` • ${item.view_count} görüntüleme` : ''}
                   </Text>
                 </View>
 
-                <View style={styles.selectPill}>
-                  <Ionicons name="download-outline" size={16} color="#2563EB" />
+                <View style={[styles.selectPill, isDarkMode && styles.selectPillDark]}>
+                  <Ionicons
+                    name="download-outline"
+                    size={16}
+                    color={isDarkMode ? '#60A5FA' : '#2563EB'}
+                  />
                 </View>
               </TouchableOpacity>
             ))}
@@ -353,15 +375,23 @@ export default function DownloaderTab({ onSwitchToHistory }) {
 
       {/* Seçilen Video Önizleme & İndirme Kartı */}
       {videoInfo && (
-        <View style={styles.card}>
-          {/* Eğer arama sonuçlarından seçildiyse geri dönüş butonu */}
+        <View style={[styles.card, isDarkMode && styles.cardDark]}>
           {searchResults.length > 0 && (
             <TouchableOpacity
-              style={styles.backToSearchBtn}
+              style={[styles.backToSearchBtn, isDarkMode && styles.backToSearchBtnDark]}
               onPress={() => setVideoInfo(null)}
             >
-              <Ionicons name="arrow-back" size={15} color="#2563EB" />
-              <Text style={styles.backToSearchText}>
+              <Ionicons
+                name="arrow-back"
+                size={15}
+                color={isDarkMode ? '#60A5FA' : '#2563EB'}
+              />
+              <Text
+                style={[
+                  styles.backToSearchText,
+                  isDarkMode && { color: '#60A5FA' },
+                ]}
+              >
                 Diğer Arama Sonuçlarına Dön ({searchResults.length})
               </Text>
             </TouchableOpacity>
@@ -382,12 +412,18 @@ export default function DownloaderTab({ onSwitchToHistory }) {
             </View>
 
             <View style={styles.videoMeta}>
-              <Text style={styles.videoTitle} numberOfLines={2}>
+              <Text
+                style={[styles.videoTitle, isDarkMode && styles.textPrimaryDark]}
+                numberOfLines={2}
+              >
                 {videoInfo.title}
               </Text>
               <View style={styles.channelRow}>
                 <Ionicons name="person-circle-outline" size={14} color="#94A3B8" />
-                <Text style={styles.channelText} numberOfLines={1}>
+                <Text
+                  style={[styles.channelText, isDarkMode && styles.textSecondaryDark]}
+                  numberOfLines={1}
+                >
                   {videoInfo.channel || videoInfo.author || 'YouTube'}
                 </Text>
               </View>
@@ -401,8 +437,15 @@ export default function DownloaderTab({ onSwitchToHistory }) {
           </View>
 
           {/* Format Seçimi: M4A vs MP4 */}
-          <Text style={styles.sectionLabel}>İndirme Formatı</Text>
-          <View style={styles.formatToggleContainer}>
+          <Text style={[styles.sectionLabel, isDarkMode && styles.textPrimaryDark]}>
+            İndirme Formatı
+          </Text>
+          <View
+            style={[
+              styles.formatToggleContainer,
+              isDarkMode && styles.formatToggleContainerDark,
+            ]}
+          >
             <TouchableOpacity
               style={[
                 styles.formatTab,
@@ -416,7 +459,7 @@ export default function DownloaderTab({ onSwitchToHistory }) {
               <Ionicons
                 name="musical-notes"
                 size={18}
-                color={mediaType === 'm4a' ? '#FFFFFF' : '#64748B'}
+                color={mediaType === 'm4a' ? '#FFFFFF' : '#94A3B8'}
               />
               <Text
                 style={[
@@ -442,7 +485,7 @@ export default function DownloaderTab({ onSwitchToHistory }) {
               <Ionicons
                 name="videocam"
                 size={18}
-                color={mediaType === 'mp4' ? '#FFFFFF' : '#64748B'}
+                color={mediaType === 'mp4' ? '#FFFFFF' : '#94A3B8'}
               />
               <Text
                 style={[
@@ -456,7 +499,7 @@ export default function DownloaderTab({ onSwitchToHistory }) {
           </View>
 
           {/* Kalite Seçenekleri */}
-          <Text style={styles.sectionLabel}>
+          <Text style={[styles.sectionLabel, isDarkMode && styles.textPrimaryDark]}>
             {mediaType === 'm4a' ? 'Ses Kalitesi' : 'Video Çözünürlüğü'}
           </Text>
           <View style={styles.qualityList}>
@@ -470,19 +513,33 @@ export default function DownloaderTab({ onSwitchToHistory }) {
                   key={fmt.value}
                   style={[
                     styles.qualityChip,
-                    isSelected && styles.qualityChipSelected,
+                    isDarkMode && styles.qualityChipDark,
+                    isSelected &&
+                      (isDarkMode
+                        ? styles.qualityChipSelectedDark
+                        : styles.qualityChipSelected),
                   ]}
                   onPress={() => setSelectedQuality(fmt.value)}
                 >
                   <Ionicons
                     name={isSelected ? 'checkmark-circle' : 'radio-button-off'}
                     size={16}
-                    color={isSelected ? '#2563EB' : '#94A3B8'}
+                    color={
+                      isSelected
+                        ? isDarkMode
+                          ? '#60A5FA'
+                          : '#2563EB'
+                        : '#94A3B8'
+                    }
                   />
                   <Text
                     style={[
                       styles.qualityChipText,
-                      isSelected && styles.qualityChipTextSelected,
+                      isDarkMode && styles.textSecondaryDark,
+                      isSelected &&
+                        (isDarkMode
+                          ? styles.qualityChipTextSelectedDark
+                          : styles.qualityChipTextSelected),
                     ]}
                   >
                     {fmt.label}
@@ -492,109 +549,249 @@ export default function DownloaderTab({ onSwitchToHistory }) {
             })}
           </View>
 
-          {/* İndirme Başlat Butonu */}
+          {/* İndirme Başlat / Kuyruğa Ekle Butonu */}
           <TouchableOpacity
-            style={[
-              styles.downloadActionBtn,
-              downloading && { opacity: 0.6 },
-            ]}
+            style={styles.downloadActionBtn}
             onPress={handleStartDownload}
-            disabled={downloading}
           >
-            {downloading ? (
-              <ActivityIndicator size="small" color="#FFFFFF" />
-            ) : (
-              <>
-                <Ionicons
-                  name={mediaType === 'm4a' ? 'musical-note' : 'download'}
-                  size={20}
-                  color="#FFFFFF"
-                />
-                <Text style={styles.downloadActionBtnText}>
-                  {mediaType === 'm4a' ? 'M4A Şarkı Olarak İndir' : 'MP4 HD Video Olarak İndir'}
-                </Text>
-              </>
-            )}
+            <Ionicons
+              name={
+                queueState.isBusy
+                  ? 'add-circle-outline'
+                  : mediaType === 'm4a'
+                  ? 'musical-note'
+                  : 'download'
+              }
+              size={20}
+              color="#FFFFFF"
+            />
+            <Text style={styles.downloadActionBtnText}>
+              {queueState.isBusy
+                ? mediaType === 'm4a'
+                  ? 'M4A Şarkıyı İndirme Sırasına Ekle'
+                  : 'MP4 Videoyu İndirme Sırasına Ekle'
+                : mediaType === 'm4a'
+                ? 'M4A Şarkı Olarak İndir'
+                : 'MP4 HD Video Olarak İndir'}
+            </Text>
           </TouchableOpacity>
         </View>
       )}
 
-      {/* Aktif İndirme & İlerleme Kartı */}
-      {activeTask && (
-        <View style={[styles.card, styles.taskCard]}>
-          <View style={styles.taskHeader}>
-            <View style={styles.taskHeaderLeft}>
-              <View
-                style={[
-                  styles.typeBadge,
-                  {
-                    backgroundColor:
-                      activeTask.type === 'm4a' || activeTask.type === 'mp3' ? '#4F46E5' : '#0284C7',
-                  },
-                ]}
-              >
-                <Text style={styles.typeBadgeText}>
-                  {activeTask.type === 'm4a' || activeTask.type === 'mp3' ? 'M4A' : 'MP4'}
-                </Text>
-              </View>
-              <Text style={styles.taskTitle} numberOfLines={1}>
-                {activeTask.title || 'İndiriliyor...'}
+      {/* Aktif İndirme ve Bekleyen İndirmeler Kuyruğu */}
+      {queueState.tasks.length > 0 && (
+        <View style={[styles.card, isDarkMode && styles.cardDark]}>
+          <View style={styles.queueHeaderRow}>
+            <View style={styles.queueTitleGroup}>
+              <Ionicons
+                name="layers-outline"
+                size={18}
+                color={isDarkMode ? '#60A5FA' : '#2563EB'}
+              />
+              <Text style={[styles.queueSectionTitle, isDarkMode && styles.textPrimaryDark]}>
+                İndirme Kuyruğu ({queueState.tasks.length})
               </Text>
+              {queueState.queuedCount > 0 && (
+                <View style={styles.waitingCountBadge}>
+                  <Text style={styles.waitingCountBadgeText}>
+                    {queueState.queuedCount} Sırada
+                  </Text>
+                </View>
+              )}
             </View>
 
-            <Text style={styles.percentText}>{activeTask.progress}%</Text>
-          </View>
-
-          {/* İlerleme Çubuğu */}
-          <View style={styles.progressBarBg}>
-            <View
-              style={[
-                styles.progressBarFill,
-                { width: `${Math.min(100, Math.max(0, activeTask.progress))}%` },
-                activeTask.status === 'completed' && { backgroundColor: '#10B981' },
-              ]}
-            />
-          </View>
-
-          {/* Durum & Hız Bilgileri */}
-          <View style={styles.taskMetaRow}>
-            <Text style={styles.taskStatusText}>
-              {activeTask.status === 'queued' && '⏳ Hazırlanıyor...'}
-              {activeTask.status === 'downloading' &&
-                `⚡ İndiriliyor ${activeTask.speed ? '(' + activeTask.speed + ')' : ''}`}
-              {activeTask.status === 'processing' && '🎬 Birleştiriliyor...'}
-              {activeTask.status === 'completed' && '✅ İndirilenler listesine kaydedildi!'}
-              {activeTask.status === 'failed' && '❌ İndirme Başarısız Oldu'}
-            </Text>
-
-            {activeTask.eta ? (
-              <Text style={styles.taskEtaText}>Kalan: {activeTask.eta}</Text>
-            ) : null}
-          </View>
-
-          {/* Tamamlandıysa: İndirilenlere Git / Oynat Butonu */}
-          {activeTask.status === 'completed' && (
-            <View style={styles.completedActions}>
+            {hasFinishedTasks && (
               <TouchableOpacity
-                style={styles.saveFileBtn}
-                onPress={onSwitchToHistory}
+                style={styles.clearFinishedBtn}
+                onPress={handleClearFinished}
               >
-                <Ionicons name="musical-notes" size={18} color="#FFFFFF" />
-                <Text style={styles.saveFileBtnText}>
-                  İndirilenlere Git & Oynat
-                </Text>
+                <Text style={styles.clearFinishedText}>Tamamlananları Gizle</Text>
               </TouchableOpacity>
+            )}
+          </View>
 
-              <TouchableOpacity
-                style={styles.historyShortcutBtn}
-                onPress={handleSaveToDevice}
-                disabled={savingToDevice}
-              >
-                <Ionicons name="share-social-outline" size={16} color="#2563EB" />
-                <Text style={styles.historyShortcutText}>Aç / Paylaş</Text>
-              </TouchableOpacity>
-            </View>
-          )}
+          <View style={styles.queueTasksList}>
+            {queueState.tasks.map((task) => {
+              const isAudio = task.type === 'm4a' || task.type === 'mp3';
+              const isSavingThis = savingTaskId === task.id;
+
+              return (
+                <View
+                  key={task.id}
+                  style={[
+                    styles.taskCard,
+                    isDarkMode && styles.taskCardDark,
+                    task.status === 'queued' &&
+                      (isDarkMode ? styles.taskCardQueuedDark : styles.taskCardQueued),
+                  ]}
+                >
+                  <View style={styles.taskHeader}>
+                    <View style={styles.taskHeaderLeft}>
+                      <View
+                        style={[
+                          styles.typeBadge,
+                          {
+                            backgroundColor: isAudio ? '#4F46E5' : '#0284C7',
+                          },
+                        ]}
+                      >
+                        <Text style={styles.typeBadgeText}>
+                          {isAudio ? 'M4A' : 'MP4'}
+                        </Text>
+                      </View>
+                      <Text
+                        style={[styles.taskTitle, isDarkMode && styles.textPrimaryDark]}
+                        numberOfLines={1}
+                      >
+                        {task.title || 'Medya'}
+                      </Text>
+                    </View>
+
+                    {task.status === 'queued' ? (
+                      <View style={styles.queuedRightAction}>
+                        <View style={styles.queueOrderPill}>
+                          <Ionicons name="time-outline" size={12} color="#D97706" />
+                          <Text style={styles.queueOrderPillText}>
+                            {task.queuePosition > 0
+                              ? `${task.queuePosition}. Sırada`
+                              : 'Sırada'}
+                          </Text>
+                        </View>
+                        <TouchableOpacity
+                          style={styles.cancelQueueBtn}
+                          onPress={() => handleCancelQueued(task.id)}
+                        >
+                          <Ionicons name="close-circle" size={19} color="#EF4444" />
+                        </TouchableOpacity>
+                      </View>
+                    ) : (
+                      <Text style={styles.percentText}>{task.progress}%</Text>
+                    )}
+                  </View>
+
+                  {/* İlerleme Çubuğu */}
+                  <View
+                    style={[
+                      styles.progressBarBg,
+                      isDarkMode && styles.progressBarBgDark,
+                    ]}
+                  >
+                    <View
+                      style={[
+                        styles.progressBarFill,
+                        {
+                          width: `${Math.min(100, Math.max(0, task.progress || 0))}%`,
+                        },
+                        task.status === 'completed' && { backgroundColor: '#10B981' },
+                        task.status === 'failed' && { backgroundColor: '#EF4444' },
+                      ]}
+                    />
+                  </View>
+
+                  {/* Durum & Hız Bilgileri */}
+                  <View style={styles.taskMetaRow}>
+                    <View style={styles.taskStatusLeft}>
+                      <Ionicons
+                        name={
+                          task.status === 'queued'
+                            ? 'hourglass-outline'
+                            : task.status === 'downloading'
+                            ? 'arrow-down-circle-outline'
+                            : task.status === 'completed'
+                            ? 'checkmark-circle'
+                            : 'alert-circle'
+                        }
+                        size={14}
+                        color={
+                          task.status === 'completed'
+                            ? '#10B981'
+                            : task.status === 'failed'
+                            ? '#EF4444'
+                            : task.status === 'queued'
+                            ? '#D97706'
+                            : '#2563EB'
+                        }
+                      />
+                      <Text
+                        style={[
+                          styles.taskStatusText,
+                          isDarkMode && styles.textSecondaryDark,
+                        ]}
+                        numberOfLines={1}
+                      >
+                        {task.status === 'queued' &&
+                          'Bekleyen indirmelerde sırada bekliyor'}
+                        {task.status === 'downloading' &&
+                          `İndiriliyor ${task.speed ? '(' + task.speed + ')' : ''}`}
+                        {task.status === 'processing' && 'Birleştiriliyor...'}
+                        {task.status === 'completed' &&
+                          'İndirilenler listesine kaydedildi'}
+                        {task.status === 'failed' &&
+                          (task.error || 'İndirme başarısız oldu')}
+                      </Text>
+                    </View>
+
+                    {task.eta && task.status === 'downloading' ? (
+                      <Text style={styles.taskEtaText}>Kalan: {task.eta}</Text>
+                    ) : null}
+                  </View>
+
+                  {/* Tamamlandıysa: Dosyayı Aç / Paylaş ve İndirilenlere Git */}
+                  {task.status === 'completed' && (
+                    <View
+                      style={[
+                        styles.completedActions,
+                        isDarkMode && styles.completedActionsDark,
+                      ]}
+                    >
+                      <TouchableOpacity
+                        style={styles.saveFileBtn}
+                        onPress={() => handleSaveToDevice(task)}
+                        disabled={isSavingThis}
+                      >
+                        {isSavingThis ? (
+                          <ActivityIndicator size="small" color="#FFFFFF" />
+                        ) : (
+                          <>
+                            <Ionicons
+                              name="play-circle-outline"
+                              size={17}
+                              color="#FFFFFF"
+                            />
+                            <Text style={styles.saveFileBtnText}>
+                              Dosyayı Aç / Paylaş
+                            </Text>
+                          </>
+                        )}
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={[
+                          styles.historyShortcutBtn,
+                          isDarkMode && styles.historyShortcutBtnDark,
+                        ]}
+                        onPress={onSwitchToHistory}
+                      >
+                        <Ionicons
+                          name="folder-open-outline"
+                          size={15}
+                          color={isDarkMode ? '#60A5FA' : '#2563EB'}
+                        />
+                        <Text
+                          style={[
+                            styles.historyShortcutText,
+                            isDarkMode && { color: '#60A5FA' },
+                          ]}
+                        >
+                          İndirilenlere Git & Oynat
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                </View>
+              );
+            })}
+          </View>
         </View>
       )}
     </ScrollView>
@@ -606,12 +803,16 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#F8FAFC',
   },
+  containerDark: {
+    backgroundColor: '#0B0F19',
+  },
   contentContainer: {
-    padding: 15,
-    paddingBottom: 32,
+    paddingHorizontal: 14,
+    paddingTop: 10,
+    paddingBottom: 28,
   },
   headerArea: {
-    marginBottom: 14,
+    marginBottom: 10,
   },
   appTitle: {
     fontSize: 20,
@@ -625,6 +826,12 @@ const styles = StyleSheet.create({
     marginTop: 3,
     lineHeight: 18,
   },
+  textPrimaryDark: {
+    color: '#F8FAFC',
+  },
+  textSecondaryDark: {
+    color: '#94A3B8',
+  },
   card: {
     backgroundColor: '#FFFFFF',
     borderRadius: 15,
@@ -637,6 +844,10 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.04,
     shadowRadius: 8,
     elevation: 2,
+  },
+  cardDark: {
+    backgroundColor: '#111827',
+    borderColor: '#1E293B',
   },
   inputLabel: {
     fontSize: 12.5,
@@ -652,6 +863,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#CBD5E1',
     paddingHorizontal: 12,
+  },
+  inputWrapperDark: {
+    backgroundColor: '#0B0F19',
+    borderColor: '#334155',
   },
   linkIcon: {
     marginRight: 8,
@@ -681,6 +896,10 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     borderWidth: 1,
     borderColor: '#CBD5E1',
+  },
+  pasteBtnDark: {
+    backgroundColor: '#1E293B',
+    borderColor: '#334155',
   },
   pasteBtnText: {
     color: '#334155',
@@ -717,8 +936,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#FCA5A5',
   },
+  errorBoxDark: {
+    backgroundColor: '#2A1215',
+    borderColor: '#7F1D1D',
+  },
   errorText: {
-    color: '#DC2626',
+    color: '#EF4444',
     fontSize: 12,
     flex: 1,
   },
@@ -756,6 +979,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E2E8F0',
     gap: 10,
+  },
+  searchResultRowDark: {
+    backgroundColor: '#0B0F19',
+    borderColor: '#1E293B',
   },
   searchThumbBox: {
     width: 84,
@@ -801,6 +1028,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  selectPillDark: {
+    backgroundColor: '#1E293B',
+    borderColor: '#334155',
+  },
   backToSearchBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -813,6 +1044,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#BFDBFE',
     marginBottom: 12,
+  },
+  backToSearchBtnDark: {
+    backgroundColor: '#1E293B',
+    borderColor: '#334155',
   },
   backToSearchText: {
     color: '#2563EB',
@@ -830,7 +1065,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     overflow: 'hidden',
     position: 'relative',
-    backgroundColor: '#E2E8F0',
+    backgroundColor: '#1E293B',
   },
   thumbnail: {
     width: '100%',
@@ -896,6 +1131,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E2E8F0',
   },
+  formatToggleContainerDark: {
+    backgroundColor: '#0B0F19',
+    borderColor: '#1E293B',
+  },
   formatTab: {
     flex: 1,
     flexDirection: 'row',
@@ -935,9 +1174,17 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E2E8F0',
   },
+  qualityChipDark: {
+    backgroundColor: '#0B0F19',
+    borderColor: '#1E293B',
+  },
   qualityChipSelected: {
     borderColor: '#2563EB',
     backgroundColor: '#EFF6FF',
+  },
+  qualityChipSelectedDark: {
+    borderColor: '#3B82F6',
+    backgroundColor: '#1E293B',
   },
   qualityChipText: {
     color: '#475569',
@@ -946,6 +1193,10 @@ const styles = StyleSheet.create({
   },
   qualityChipTextSelected: {
     color: '#1D4ED8',
+    fontWeight: '700',
+  },
+  qualityChipTextSelectedDark: {
+    color: '#60A5FA',
     fontWeight: '700',
   },
   downloadActionBtn: {
@@ -963,18 +1214,76 @@ const styles = StyleSheet.create({
   },
   downloadActionBtnText: {
     color: '#FFFFFF',
-    fontSize: 14.5,
+    fontSize: 14,
     fontWeight: '700',
   },
+  // İndirme Kuyruğu Stilleri
+  queueHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  queueTitleGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+  },
+  queueSectionTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  waitingCountBadge: {
+    backgroundColor: '#FEF3C7',
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 10,
+  },
+  waitingCountBadgeText: {
+    color: '#B45309',
+    fontSize: 10.5,
+    fontWeight: '800',
+  },
+  clearFinishedBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  clearFinishedText: {
+    color: '#64748B',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  queueTasksList: {
+    gap: 10,
+  },
   taskCard: {
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
     borderColor: '#BFDBFE',
     backgroundColor: '#F8FAFC',
+  },
+  taskCardDark: {
+    backgroundColor: '#0B0F19',
+    borderColor: '#1E293B',
+  },
+  taskCardQueued: {
+    borderColor: '#FDE68A',
+    backgroundColor: '#FFFBEB',
+  },
+  taskCardQueuedDark: {
+    borderColor: '#78350F',
+    backgroundColor: '#1C1917',
   },
   taskHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 10,
+    marginBottom: 8,
   },
   taskHeaderLeft: {
     flexDirection: 'row',
@@ -989,27 +1298,53 @@ const styles = StyleSheet.create({
   },
   typeBadgeText: {
     color: '#FFFFFF',
-    fontSize: 11,
+    fontSize: 10.5,
     fontWeight: '800',
   },
   taskTitle: {
     color: '#0F172A',
-    fontSize: 13,
-    fontWeight: '600',
+    fontSize: 12.5,
+    fontWeight: '700',
     flex: 1,
+  },
+  queuedRightAction: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginLeft: 6,
+  },
+  queueOrderPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: '#FEF3C7',
+    paddingHorizontal: 7,
+    paddingVertical: 2.5,
+    borderRadius: 8,
+  },
+  queueOrderPillText: {
+    color: '#B45309',
+    fontSize: 10.5,
+    fontWeight: '800',
+  },
+  cancelQueueBtn: {
+    padding: 2,
   },
   percentText: {
     color: '#2563EB',
-    fontSize: 14,
+    fontSize: 13.5,
     fontWeight: '800',
     marginLeft: 8,
   },
   progressBarBg: {
-    height: 8,
+    height: 7,
     backgroundColor: '#E2E8F0',
     borderRadius: 4,
     overflow: 'hidden',
-    marginBottom: 10,
+    marginBottom: 8,
+  },
+  progressBarBgDark: {
+    backgroundColor: '#1E293B',
   },
   progressBarFill: {
     height: '100%',
@@ -1021,10 +1356,16 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
   },
+  taskStatusLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    flex: 1,
+  },
   taskStatusText: {
     color: '#475569',
-    fontSize: 12,
-    fontWeight: '500',
+    fontSize: 11.5,
+    fontWeight: '600',
     flex: 1,
   },
   taskEtaText: {
@@ -1033,40 +1374,50 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   completedActions: {
-    marginTop: 14,
-    paddingTop: 12,
+    marginTop: 10,
+    paddingTop: 10,
     borderTopWidth: 1,
     borderTopColor: '#E2E8F0',
+    flexDirection: 'row',
     gap: 8,
+  },
+  completedActionsDark: {
+    borderTopColor: '#1E293B',
   },
   saveFileBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    backgroundColor: '#10B981',
-    height: 42,
-    borderRadius: 10,
-  },
-  saveFileBtnText: {
-    color: '#FFFFFF',
-    fontSize: 13.5,
-    fontWeight: '700',
-  },
-  historyShortcutBtn: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
+    backgroundColor: '#10B981',
     height: 36,
-    borderRadius: 8,
+    borderRadius: 9,
+  },
+  saveFileBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  historyShortcutBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    height: 36,
+    borderRadius: 9,
     backgroundColor: '#EFF6FF',
     borderWidth: 1,
     borderColor: '#BFDBFE',
   },
+  historyShortcutBtnDark: {
+    backgroundColor: '#1E293B',
+    borderColor: '#334155',
+  },
   historyShortcutText: {
     color: '#2563EB',
-    fontSize: 12.5,
+    fontSize: 12,
     fontWeight: '700',
   },
 });
