@@ -134,10 +134,12 @@ export default function HistoryTab({
     }
   };
 
-  const handleDelete = async (filename) => {
+  const handleDelete = async (item) => {
+    const filename = item.filename;
+    const displayTitle = item.title || filename;
     const doDelete = async () => {
       try {
-        await deleteLocalHistoryItem(filename);
+        await deleteLocalHistoryItem(filename, item.download_url || '');
         setItems((prev) => prev.filter((i) => i.filename !== filename));
       } catch (e) {
         Alert.alert('Hata', 'Silinemedi: ' + e.message);
@@ -145,16 +147,16 @@ export default function HistoryTab({
     };
 
     if (Platform.OS === 'web') {
-      if (window.confirm(`'${filename}' dosyasını silmek istediğinize emin misiniz?`)) {
+      if (window.confirm(`'${displayTitle}' dosyasını telefon hafızasından ve listeden silmek istediğinize emin misiniz?`)) {
         doDelete();
       }
     } else {
       Alert.alert(
-        'Dosyayı Sil',
-        `'${filename}' dosyasını listeden silmek istediğinize emin misiniz?`,
+        'Telefondan Kalıcı Olarak Sil',
+        `'${displayTitle}' dosyasını hem uygulama listesinden hem de telefon hafızasından (Download/MediaToolkit) tamamen silmek istediğinize emin misiniz?`,
         [
           { text: 'İptal', style: 'cancel' },
-          { text: 'Sil', style: 'destructive', onPress: doDelete },
+          { text: 'Tamamen Sil', style: 'destructive', onPress: doDelete },
         ]
       );
     }
@@ -339,7 +341,7 @@ export default function HistoryTab({
 
           <TouchableOpacity
             style={styles.iconCircleBtn}
-            onPress={() => handleDelete(item.filename)}
+            onPress={() => handleDelete(item)}
           >
             <Ionicons name="trash-outline" size={15} color="#EF4444" />
           </TouchableOpacity>

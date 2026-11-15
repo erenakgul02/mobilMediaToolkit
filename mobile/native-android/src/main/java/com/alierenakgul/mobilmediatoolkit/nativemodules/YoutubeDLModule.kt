@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.media.MediaCodec
 import android.media.MediaExtractor
@@ -12,6 +13,7 @@ import android.media.MediaFormat as AndroidMediaFormat
 import android.media.MediaMuxer
 import android.media.MediaScannerConnection
 import android.net.Uri
+import android.os.Build
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
@@ -22,6 +24,8 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.Window
+import android.view.WindowInsets
+import android.view.WindowInsetsController
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.LinearLayout
@@ -38,16 +42,20 @@ import com.facebook.react.bridge.ReadableArray
 import com.facebook.react.modules.core.DeviceEventManagerModule
 import org.schabi.newpipe.extractor.MediaFormat
 import org.schabi.newpipe.extractor.NewPipe
+import org.schabi.newpipe.extractor.ServiceList
 import org.schabi.newpipe.extractor.downloader.Downloader
 import org.schabi.newpipe.extractor.downloader.Request
 import org.schabi.newpipe.extractor.downloader.Response
 import org.schabi.newpipe.extractor.exceptions.ReCaptchaException
 import org.schabi.newpipe.extractor.localization.ContentCountry
 import org.schabi.newpipe.extractor.localization.Localization
+import org.schabi.newpipe.extractor.search.SearchInfo
 import org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper
+import org.schabi.newpipe.extractor.services.youtube.linkHandler.YoutubeSearchQueryHandlerFactory
 import org.schabi.newpipe.extractor.stream.AudioStream
 import org.schabi.newpipe.extractor.stream.AudioTrackType
 import org.schabi.newpipe.extractor.stream.StreamInfo
+import org.schabi.newpipe.extractor.stream.StreamInfoItem
 import org.schabi.newpipe.extractor.stream.VideoStream
 import java.io.File
 import java.io.FileOutputStream
@@ -324,6 +332,117 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
     }
 
     @ReactMethod
+    fun deleteMediaFile(filePathOrUrl: String, filename: String, promise: Promise) {
+        executor.execute {
+            try {
+                // Silinen dosya şu an müzik çalarda çalıyorsa durdur
+                try {
+                    val state = MusicPlayerService.getCurrentStateMap()
+                    val activeFile = state.getString("filename") ?: ""
+                    if (activeFile.isNotEmpty() && activeFile == filename) {
+                        MusicPlayerService.sendCommand(reactContext, MusicPlayerService.ACTION_STOP)
+                    }
+                } catch (_: Exception) {}
+
+                val candidates = mutableSetOf<File>()
+                if (filePathOrUrl.isNotBlank()) {
+                    candidates.add(File(filePathOrUrl.removePrefix("file://")))
+                }
+                if (filename.isNotBlank()) {
+                    candidates.add(File(getStorageDir(), filename))
+                    candidates.add(
+                        File(
+                            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+                            "MediaToolkit/$filename"
+                        )
+                    )
+                    val extFiles = reactContext.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+                    if (extFiles != null) {
+                        candidates.add(File(extFiles, "MediaToolkit/$filename"))
+                    }
+                    candidates.add(File(reactContext.filesDir, "MediaToolkit/$filename"))
+                }
+
+                val deletedPaths = mutableListOf<String>()
+                for (f in candidates) {
+                    try {
+                        if (f.exists()) {
+                            val abs = f.absolutePath
+                            if (f.delete()) {
+                                deletedPaths.add(abs)
+                            }
+                        }
+                    } catch (_: Exception) {}
+                }
+
+                if (deletedPaths.isNotEmpty()) {
+                    try {
+                        MediaScannerConnection.scanFile(
+                            reactContext.applicationContext,
+                            deletedPaths.toTypedArray(),
+                            null,
+                            null
+                        )
+                    } catch (_: Exception) {}
+                }
+
+                promise.resolve(deletedPaths.isNotEmpty())
+            } catch (e: Exception) {
+                Log.e(TAG, "deleteMediaFile hatası", e)
+                promise.reject("DELETE_ERROR", e.localizedMessage ?: "Dosya silinemedi", e)
+            }
+        }
+    }
+
+    private fun applyImmersiveFullscreen(window: Window?) {
+        if (window == null) return
+        try {
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            window.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
+            window.addFlags(WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                val lp = window.attributes
+                lp.layoutInDisplayCutoutMode =
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+                window.attributes = lp
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                window.setDecorFitsSystemWindows(false)
+                window.insetsController?.let { controller ->
+                    controller.hide(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars())
+                    controller.systemBarsBehavior =
+                        WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                }
+            }
+            @Suppress("DEPRECATION")
+            window.decorView.systemUiVisibility = (
+                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                    or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                    or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                    or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                    or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                    or View.SYSTEM_UI_FLAG_FULLSCREEN
+                )
+        } catch (_: Exception) {}
+    }
+
+    private fun restoreSystemBars(window: Window?) {
+        if (window == null) return
+        try {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
+            window.clearFlags(WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                window.setDecorFitsSystemWindows(true)
+                window.insetsController?.show(
+                    WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars()
+                )
+            }
+            @Suppress("DEPRECATION")
+            window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_VISIBLE
+        } catch (_: Exception) {}
+    }
+
+    @ReactMethod
     fun playVideoInApp(
         filePathOrUrl: String,
         filename: String,
@@ -368,14 +487,15 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
             try {
                 val dialog = Dialog(activity, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
                 dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
-                dialog.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
                 var isLandscape = false
                 var isSeeking = false
                 var durationMs = 0
+                var videoW = 16
+                var videoH = 9
 
                 val rootLayout = FrameLayout(activity).apply {
-                    setBackgroundColor(Color.parseColor("#090D16"))
+                    setBackgroundColor(Color.BLACK)
                     layoutParams = ViewGroup.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.MATCH_PARENT
@@ -384,6 +504,7 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
 
                 // Merkez VideoView
                 val videoContainer = FrameLayout(activity).apply {
+                    setBackgroundColor(Color.BLACK)
                     layoutParams = FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.MATCH_PARENT,
@@ -394,7 +515,7 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
                 val videoView = VideoView(activity).apply {
                     layoutParams = FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT,
                         Gravity.CENTER
                     )
                     setVideoPath(targetFile.absolutePath)
@@ -402,12 +523,30 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
                 videoContainer.addView(videoView)
                 rootLayout.addView(videoContainer)
 
-                // Üst Başlık Çubuğu (Geri + Başlık + Döndür + Paylaş)
+                fun updateVideoBounds() {
+                    val containerW = rootLayout.width
+                    val containerH = rootLayout.height
+                    if (containerW <= 0 || containerH <= 0 || videoW <= 0 || videoH <= 0) return
+                    val vAspect = videoW.toFloat() / videoH.toFloat()
+                    val cAspect = containerW.toFloat() / containerH.toFloat()
+                    val (fittedW, fittedH) = if (vAspect > cAspect) {
+                        containerW to (containerW / vAspect).toInt()
+                    } else {
+                        (containerH * vAspect).toInt() to containerH
+                    }
+                    videoView.layoutParams = FrameLayout.LayoutParams(
+                        fittedW.coerceAtLeast(1),
+                        fittedH.coerceAtLeast(1),
+                        Gravity.CENTER
+                    )
+                }
+
+                // Üst Başlık Çubuğu (Geri + Başlık + Döndür)
                 val topBar = LinearLayout(activity).apply {
                     orientation = LinearLayout.HORIZONTAL
                     gravity = Gravity.CENTER_VERTICAL
-                    setBackgroundColor(Color.parseColor("#CC0F172A"))
-                    setPadding(dpToPx(14), dpToPx(14), dpToPx(14), dpToPx(14))
+                    setBackgroundColor(Color.parseColor("#CC090D16"))
+                    setPadding(dpToPx(16), dpToPx(16), dpToPx(16), dpToPx(14))
                     layoutParams = FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -459,14 +598,13 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
                 titleCol.addView(subTv)
 
                 val rotateBtn = TextView(activity).apply {
-                    text = "🔄 Döndür"
+                    text = "🔄 Tam Ekran Döndür"
                     setTextColor(Color.WHITE)
                     setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
                     typeface = Typeface.DEFAULT_BOLD
-                    setPadding(dpToPx(10), dpToPx(7), dpToPx(10), dpToPx(7))
+                    setPadding(dpToPx(12), dpToPx(7), dpToPx(12), dpToPx(7))
                     background = GradientDrawable().apply {
-                        setColor(Color.parseColor("#1E293B"))
-                        setStroke(dpToPx(1), Color.parseColor("#475569"))
+                        setColor(Color.parseColor("#0284C7"))
                         cornerRadius = dpToPx(8).toFloat()
                     }
                     setOnClickListener {
@@ -476,6 +614,11 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
                         } else {
                             ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
                         }
+                        uiHandler.postDelayed({
+                            applyImmersiveFullscreen(dialog.window)
+                            applyImmersiveFullscreen(activity.window)
+                            updateVideoBounds()
+                        }, 150L)
                     }
                 }
 
@@ -487,8 +630,8 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
                 // Alt Kontrol Çubuğu (Süre + SeekBar + -10sn / Oynat-Duraklat / +10sn)
                 val bottomBar = LinearLayout(activity).apply {
                     orientation = LinearLayout.VERTICAL
-                    setBackgroundColor(Color.parseColor("#D90F172A"))
-                    setPadding(dpToPx(16), dpToPx(12), dpToPx(16), dpToPx(24))
+                    setBackgroundColor(Color.parseColor("#D9090D16"))
+                    setPadding(dpToPx(18), dpToPx(12), dpToPx(18), dpToPx(22))
                     layoutParams = FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -640,11 +783,20 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
                 bottomBar.addView(controlsRow)
                 rootLayout.addView(bottomBar)
 
-                // Ekrana dokununca üst ve alt barı gizle/göster
+                // Ekran boyutu veya yönü değiştiğinde (döndürüldüğünde) video oranını koruyarak yeniden boyutlandır
+                rootLayout.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+                    uiHandler.post {
+                        applyImmersiveFullscreen(dialog.window)
+                        updateVideoBounds()
+                    }
+                }
+
+                // Ekrana dokununca üst ve alt barı gizle/göster + tam ekranı koru
                 videoContainer.setOnClickListener {
                     val vis = if (topBar.visibility == View.VISIBLE) View.GONE else View.VISIBLE
                     topBar.visibility = vis
                     bottomBar.visibility = vis
+                    applyImmersiveFullscreen(dialog.window)
                 }
 
                 val ticker = object : Runnable {
@@ -666,7 +818,19 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
 
                 videoView.setOnPreparedListener { mp ->
                     durationMs = mp.duration.coerceAtLeast(0)
+                    if (mp.videoWidth > 0 && mp.videoHeight > 0) {
+                        videoW = mp.videoWidth
+                        videoH = mp.videoHeight
+                    }
+                    mp.setOnVideoSizeChangedListener { _, w, h ->
+                        if (w > 0 && h > 0) {
+                            videoW = w
+                            videoH = h
+                            updateVideoBounds()
+                        }
+                    }
                     totalTimeTv.text = formatTimeMs(durationMs)
+                    updateVideoBounds()
                     videoView.start()
                     playPauseBtn.text = "⏸ Duraklat"
                     uiHandler.post(ticker)
@@ -675,6 +839,8 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
                 videoView.setOnCompletionListener {
                     playPauseBtn.text = "▶ Tekrar Oynat"
                     seekBar.progress = 1000
+                    topBar.visibility = View.VISIBLE
+                    bottomBar.visibility = View.VISIBLE
                 }
 
                 dialog.setOnDismissListener {
@@ -683,12 +849,20 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
                         videoView.stopPlayback()
                     } catch (_: Exception) {}
                     try {
-                        activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                        activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                        restoreSystemBars(activity.window)
                     } catch (_: Exception) {}
                 }
 
                 dialog.setContentView(rootLayout)
+                dialog.window?.setBackgroundDrawable(ColorDrawable(Color.BLACK))
+                dialog.window?.setLayout(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT
+                )
                 dialog.show()
+                applyImmersiveFullscreen(dialog.window)
+                applyImmersiveFullscreen(activity.window)
                 promise.resolve(true)
             } catch (e: Exception) {
                 Log.e(TAG, "Uygulama içi video oynatıcı hatası", e)
@@ -850,6 +1024,58 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
     }
 
     @ReactMethod
+    fun searchYouTube(query: String, promise: Promise) {
+        executor.execute {
+            try {
+                val trimmed = query.trim()
+                if (trimmed.isEmpty()) {
+                    promise.resolve(Arguments.createArray())
+                    return@execute
+                }
+                ensureInit()
+                val service = ServiceList.YouTube
+                val queryHandler = try {
+                    service.searchQHFactory.fromQuery(
+                        trimmed,
+                        listOf(YoutubeSearchQueryHandlerFactory.VIDEOS),
+                        ""
+                    )
+                } catch (_: Exception) {
+                    service.searchQHFactory.fromQuery(trimmed)
+                }
+
+                val searchInfo = SearchInfo.getInfo(service, queryHandler)
+                val items = searchInfo.relatedItems
+                    .filterIsInstance<StreamInfoItem>()
+                    .filter { !it.url.isNullOrBlank() && it.duration > 0 }
+                    .take(15)
+
+                val resultsArray = Arguments.createArray()
+                for (item in items) {
+                    val bestThumb = item.thumbnails
+                        .maxByOrNull { it.height }?.url
+                        ?: item.thumbnails.lastOrNull()?.url
+                        ?: ""
+
+                    val itemMap = Arguments.createMap().apply {
+                        putString("title", item.name ?: "YouTube Video")
+                        putString("url", item.url ?: "")
+                        putString("thumbnail", bestThumb)
+                        putString("uploader", item.uploaderName ?: "YouTube")
+                        putInt("duration", item.duration.toInt().coerceAtLeast(0))
+                        putDouble("viewCount", item.viewCount.toDouble().coerceAtLeast(0.0))
+                    }
+                    resultsArray.pushMap(itemMap)
+                }
+                promise.resolve(resultsArray)
+            } catch (e: Exception) {
+                Log.e(TAG, "searchYouTube hatası", e)
+                promise.reject("SEARCH_ERROR", e.localizedMessage ?: "YouTube araması yapılamadı", e)
+            }
+        }
+    }
+
+    @ReactMethod
     fun getVideoInfo(url: String, promise: Promise) {
         executor.execute {
             try {
@@ -898,14 +1124,46 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
         }
     }
 
+    private fun resolveVideoHeight(stream: VideoStream?): Int {
+        if (stream == null) return 0
+        if (stream.height > 0) return stream.height
+        val itagH = stream.itagItem?.height ?: -1
+        if (itagH > 0) return itagH
+        val res = stream.resolution ?: ""
+        val match = Regex("(\\d{3,4})p").find(res)
+        if (match != null) {
+            return match.groupValues[1].toIntOrNull() ?: 0
+        }
+        return when (stream.itag) {
+            137, 299, 248, 399 -> 1080
+            136, 298, 247, 398, 22 -> 720
+            135, 244, 397 -> 480
+            134, 243, 396, 18 -> 360
+            133, 242, 395 -> 240
+            160, 278, 394 -> 144
+            else -> 0
+        }
+    }
+
+    private fun resolveVideoBitrate(stream: VideoStream?): Int {
+        if (stream == null) return 0
+        if (stream.bitrate > 0) return stream.bitrate
+        return stream.itagItem?.bitrate ?: 0
+    }
+
+    private fun isAvcStream(stream: VideoStream): Boolean {
+        if (stream.itag in listOf(137, 299, 136, 298, 135, 134, 133, 160, 22, 18)) return true
+        val codec = stream.codec ?: stream.itagItem?.codec ?: ""
+        return codec.startsWith("avc1", ignoreCase = true)
+    }
+
     private fun selectBestAdaptiveVideoStream(streams: List<VideoStream>, maxHeight: Int): VideoStream? {
         val valid = streams.filter { it.isUrl() && it.content.isNotEmpty() }
         if (valid.isEmpty()) return null
 
-        // MediaMuxer ve tüm cihazlarla %100 uyum için MPEG_4 + avc1 (H.264) tercih et
+        // Kasma ve kalite kaybını önlemek için donanım hızlandırmalı H.264 (avc1) + MPEG_4 akışlarını seç
         val mp4Avc = valid.filter {
-            it.format == MediaFormat.MPEG_4 &&
-                (it.codec.isNullOrEmpty() || it.codec.startsWith("avc1", ignoreCase = true))
+            it.format == MediaFormat.MPEG_4 && isAvcStream(it)
         }
         val mp4All = valid.filter { it.format == MediaFormat.MPEG_4 }
         val pool = when {
@@ -914,10 +1172,13 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
             else -> valid
         }
 
-        val withinTarget = pool.filter { it.height in 1..maxHeight }
+        val withinTarget = pool.filter { resolveVideoHeight(it) in 1..maxHeight }
         val targetPool = withinTarget.ifEmpty { pool }
 
-        return targetPool.maxWithOrNull(compareBy<VideoStream> { it.height }.thenBy { it.bitrate })
+        return targetPool.maxWithOrNull(
+            compareBy<VideoStream> { resolveVideoHeight(it) }
+                .thenBy { resolveVideoBitrate(it) }
+        )
     }
 
     private fun selectBestMuxedVideoStream(streams: List<VideoStream>, maxHeight: Int): VideoStream? {
@@ -925,10 +1186,13 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
         if (valid.isEmpty()) return null
 
         val mp4Pool = valid.filter { it.format == MediaFormat.MPEG_4 }.ifEmpty { valid }
-        val withinTarget = mp4Pool.filter { it.height in 1..maxHeight }
+        val withinTarget = mp4Pool.filter { resolveVideoHeight(it) in 1..maxHeight }
         val targetPool = withinTarget.ifEmpty { mp4Pool }
 
-        return targetPool.maxWithOrNull(compareBy<VideoStream> { it.height }.thenBy { it.bitrate })
+        return targetPool.maxWithOrNull(
+            compareBy<VideoStream> { resolveVideoHeight(it) }
+                .thenBy { resolveVideoBitrate(it) }
+        )
     }
 
     private fun openStreamConnection(
@@ -1121,7 +1385,7 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
     }
 
     private fun copyTrackSamples(extractor: MediaExtractor, muxer: MediaMuxer, muxerTrackIndex: Int) {
-        val buffer = ByteBuffer.allocateDirect(512 * 1024)
+        val buffer = ByteBuffer.allocateDirect(2 * 1024 * 1024)
         val bufferInfo = MediaCodec.BufferInfo()
         while (true) {
             val sampleSize = extractor.readSampleData(buffer, 0)
@@ -1169,6 +1433,10 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
         }
     }
 
+    /**
+     * Görüntü ve ses paketlerini zaman damgasına (presentationTimeUs) göre sıralı (interleaved)
+     * olarak birleştirir. Böylece oynatıcı diskte ileri-geri atlama yapmaz ve video kesinlikle kasmaz.
+     */
     private fun muxVideoAndAudio(videoFile: File, audioFile: File, finalMp4File: File) {
         if (finalMp4File.exists()) finalMp4File.delete()
         val videoExtractor = MediaExtractor()
@@ -1193,8 +1461,56 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
             val muxAudioTrack = muxer.addTrack(audioFormat)
             muxer.start()
 
-            copyTrackSamples(videoExtractor, muxer, muxVideoTrack)
-            copyTrackSamples(audioExtractor, muxer, muxAudioTrack)
+            val buffer = ByteBuffer.allocateDirect(2 * 1024 * 1024) // 1080p kareler için 2 MB tampon
+            val bufferInfo = MediaCodec.BufferInfo()
+            var hasVideo = true
+            var hasAudio = true
+
+            while (hasVideo || hasAudio) {
+                val vPts = if (hasVideo) videoExtractor.sampleTime else Long.MAX_VALUE
+                val aPts = if (hasAudio) audioExtractor.sampleTime else Long.MAX_VALUE
+
+                if (hasVideo && vPts < 0L) {
+                    hasVideo = false
+                    continue
+                }
+                if (hasAudio && aPts < 0L) {
+                    hasAudio = false
+                    continue
+                }
+
+                if (hasVideo && (!hasAudio || vPts <= aPts)) {
+                    val sampleSize = videoExtractor.readSampleData(buffer, 0)
+                    if (sampleSize < 0) {
+                        hasVideo = false
+                    } else {
+                        bufferInfo.offset = 0
+                        bufferInfo.size = sampleSize
+                        bufferInfo.presentationTimeUs = vPts.coerceAtLeast(0L)
+                        val sFlags = videoExtractor.sampleFlags
+                        bufferInfo.flags = if ((sFlags and MediaExtractor.SAMPLE_FLAG_SYNC) != 0) {
+                            MediaCodec.BUFFER_FLAG_KEY_FRAME
+                        } else 0
+                        muxer.writeSampleData(muxVideoTrack, buffer, bufferInfo)
+                        videoExtractor.advance()
+                    }
+                } else if (hasAudio) {
+                    val sampleSize = audioExtractor.readSampleData(buffer, 0)
+                    if (sampleSize < 0) {
+                        hasAudio = false
+                    } else {
+                        bufferInfo.offset = 0
+                        bufferInfo.size = sampleSize
+                        bufferInfo.presentationTimeUs = aPts.coerceAtLeast(0L)
+                        val sFlags = audioExtractor.sampleFlags
+                        bufferInfo.flags = if ((sFlags and MediaExtractor.SAMPLE_FLAG_SYNC) != 0) {
+                            MediaCodec.BUFFER_FLAG_KEY_FRAME
+                        } else 0
+                        muxer.writeSampleData(muxAudioTrack, buffer, bufferInfo)
+                        audioExtractor.advance()
+                    }
+                }
+            }
 
             muxer.stop()
         } finally {
@@ -1252,18 +1568,25 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
                         tempAudio.copyTo(finalFile, overwrite = true)
                     }
                 } else {
-                    val maxH = if (quality.contains("1080")) 1080 else 720
+                    val maxH = when {
+                        quality.contains("1080") -> 1080
+                        quality.contains("480") -> 480
+                        else -> 720
+                    }
                     finalFile = File(downloadDir, "${safeTitle}_${maxH}p.mp4")
 
-                    // Önce hedef çözünürlükte hazır birleşik (muxed) MP4 var mı kontrol et
                     val muxedCandidate = selectBestMuxedVideoStream(info.videoStreams, maxH)
                     val adaptiveVideo = selectBestAdaptiveVideoStream(info.videoOnlyStreams, maxH)
                     val adaptiveAudio = selectBestAudioStream(info.audioStreams, "high")
 
+                    val adaptiveH = resolveVideoHeight(adaptiveVideo)
+                    val muxedH = resolveVideoHeight(muxedCandidate)
+
+                    // Gerçek HD (720p / 1080p) kalitesi için adaptive H.264 + M4A birleştirmesini tercih et
                     val useAdaptiveMux = adaptiveVideo != null &&
                         adaptiveAudio != null &&
                         adaptiveAudio.format == MediaFormat.M4A &&
-                        (muxedCandidate == null || adaptiveVideo.height > muxedCandidate.height)
+                        (muxedCandidate == null || adaptiveH >= muxedH)
 
                     if (useAdaptiveMux && adaptiveVideo != null && adaptiveAudio != null) {
                         val tempVideo = File(reactContext.cacheDir, "temp_vid_${System.currentTimeMillis()}.mp4")
@@ -1277,7 +1600,7 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
                         downloadStreamToFile(adaptiveVideo.content, vidLen, tempVideo, 5.0, 78.0)
                         downloadStreamToFile(adaptiveAudio.content, audLen, tempAudio, 78.0, 94.0)
 
-                        emitProgress(96.0, 1.0, "Görüntü ve ses birleştiriliyor...")
+                        emitProgress(96.0, 1.0, "HD görüntü ve ses birleştiriliyor...")
                         muxVideoAndAudio(tempVideo, tempAudio, finalFile)
                     } else if (muxedCandidate != null) {
                         val len = muxedCandidate.itagItem?.contentLength ?: -1L

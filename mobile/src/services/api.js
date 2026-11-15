@@ -68,6 +68,44 @@ const DEFAULT_VIDEO_FORMATS = [
   { label: '720p HD Video (MP4)', value: '720p' },
 ];
 
+export function isLikelyYouTubeUrl(rawInput) {
+  const s = (rawInput || '').trim().toLowerCase();
+  if (!s) return false;
+  if (s.startsWith('http://') || s.startsWith('https://')) return true;
+  if (s.includes('youtube.com/') || s.includes('youtu.be/')) return true;
+  // 11 karakterlik tek kelimeli YouTube Video ID kontrolü
+  if (/^[a-zA-Z0-9_-]{11}$/.test((rawInput || '').trim())) return true;
+  return false;
+}
+
+export async function searchYouTubeVideos(query) {
+  const q = (query || '').trim();
+  if (!q) {
+    throw new Error('Lütfen aramak istediğiniz şarkı veya video adını yazın.');
+  }
+
+  if (YoutubeDLNative && YoutubeDLNative.searchYouTube) {
+    const rawResults = await YoutubeDLNative.searchYouTube(q);
+    if (!Array.isArray(rawResults) || rawResults.length === 0) {
+      throw new Error('Aramanızla eşleşen bir YouTube videosu bulunamadı.');
+    }
+    return rawResults.map((item, idx) => ({
+      id: `search_${idx}_${item.url || ''}`,
+      title: item.title || 'YouTube Video',
+      url: item.url || '',
+      thumbnail: item.thumbnail || '',
+      author: item.uploader || 'YouTube',
+      channel: item.uploader || 'YouTube',
+      duration: formatDuration(item.duration),
+      view_count: formatViewCount(item.viewCount),
+      formats_audio: DEFAULT_AUDIO_FORMATS,
+      formats_video: DEFAULT_VIDEO_FORMATS,
+    }));
+  }
+
+  throw new Error('Arama motoru yalnızca güncel Android APK üzerinde desteklenir.');
+}
+
 export async function getLocalHistory() {
   try {
     const raw = await AsyncStorage.getItem(LOCAL_HISTORY_KEY);
@@ -93,9 +131,22 @@ export async function addLocalHistoryItem(item) {
   }
 }
 
-export async function deleteLocalHistoryItem(filename) {
+export async function deleteLocalHistoryItem(filename, fileUrlOrPath = '') {
   try {
     const existing = await getLocalHistory();
+    const targetItem = existing.find((i) => i.filename === filename);
+    const resolvedUrl = fileUrlOrPath || targetItem?.download_url || '';
+
+    // 1. Önce telefon hafızasından (Download/MediaToolkit) fiziksel olarak sil
+    if (Platform.OS === 'android' && YoutubeDLNative && YoutubeDLNative.deleteMediaFile) {
+      try {
+        await YoutubeDLNative.deleteMediaFile(resolvedUrl, filename || '');
+      } catch (delErr) {
+        console.warn('Fiziksel dosya silme uyarısı:', delErr);
+      }
+    }
+
+    // 2. Uygulama içi geçmiş listesinden kaldır
     const updated = existing.filter((i) => i.filename !== filename);
     await AsyncStorage.setItem(LOCAL_HISTORY_KEY, JSON.stringify(updated));
     return updated;

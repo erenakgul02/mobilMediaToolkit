@@ -9,21 +9,25 @@ import {
   Image,
   ActivityIndicator,
   Alert,
-  Platform,
+  Keyboard,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import {
   fetchVideoInfo,
+  searchYouTubeVideos,
+  isLikelyYouTubeUrl,
   startDownload,
   checkProgress,
   downloadFileToDevice,
 } from '../services/api';
 
 export default function DownloaderTab({ onSwitchToHistory }) {
-  const [url, setUrl] = useState('');
+  const [queryOrUrl, setQueryOrUrl] = useState('');
   const [loadingInfo, setLoadingInfo] = useState(false);
+  const [searchResults, setSearchResults] = useState([]);
   const [videoInfo, setVideoInfo] = useState(null);
+  const [selectedVideoUrl, setSelectedVideoUrl] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
 
   // Format selection ('m4a' or 'mp4')
@@ -43,27 +47,27 @@ export default function DownloaderTab({ onSwitchToHistory }) {
     };
   }, []);
 
-  const cleanAndSetUrl = (rawText) => {
-    if (!rawText) return false;
+  const cleanAndSetInput = (rawText) => {
+    if (!rawText) return '';
     const trimmed = String(rawText).trim();
     const urlMatch = trimmed.match(/https?:\/\/(www\.)?(youtube\.com|youtu\.be)\/[^\s]+/i);
     if (urlMatch) {
-      setUrl(urlMatch[0]);
+      setQueryOrUrl(urlMatch[0]);
       setErrorMsg('');
-      return true;
+      return urlMatch[0];
     }
     const genericMatch = trimmed.match(/https?:\/\/[^\s]+/i);
     if (genericMatch) {
-      setUrl(genericMatch[0]);
+      setQueryOrUrl(genericMatch[0]);
       setErrorMsg('');
-      return true;
+      return genericMatch[0];
     }
-    if (trimmed.length > 5) {
-      setUrl(trimmed);
+    if (trimmed.length > 1) {
+      setQueryOrUrl(trimmed);
       setErrorMsg('');
-      return true;
+      return trimmed;
     }
-    return false;
+    return '';
   };
 
   const handlePaste = async () => {
@@ -86,48 +90,68 @@ export default function DownloaderTab({ onSwitchToHistory }) {
       }
     }
 
-    const success = cleanAndSetUrl(pastedText);
-    if (!success) {
+    const cleaned = cleanAndSetInput(pastedText);
+    if (!cleaned) {
       if (urlInputRef.current) {
         urlInputRef.current.focus();
       }
-      setErrorMsg('Panoda geçerli bir bağlantı bulunamadı. Lütfen kutucuğa dokunup yapıştırın.');
+      setErrorMsg('Panoda metin veya bağlantı bulunamadı.');
     }
   };
 
-  const handleFetchInfo = async () => {
-    if (!url.trim()) {
-      setErrorMsg('Lütfen önce bir YouTube linki yapıştırın.');
+  const handleSearchOrFetch = async () => {
+    const input = queryOrUrl.trim();
+    if (!input) {
+      setErrorMsg('Lütfen bir şarkı/video adı yazın veya YouTube linki yapıştırın.');
       return;
     }
+
+    Keyboard.dismiss();
     setErrorMsg('');
     setLoadingInfo(true);
     setVideoInfo(null);
 
     try {
-      const info = await fetchVideoInfo(url.trim());
-      setVideoInfo(info);
-      if (mediaType === 'm4a') {
-        setSelectedQuality(info.formats_audio?.[0]?.value || 'high');
+      if (isLikelyYouTubeUrl(input)) {
+        setSearchResults([]);
+        const info = await fetchVideoInfo(input);
+        setVideoInfo(info);
+        setSelectedVideoUrl(input);
+        if (mediaType === 'm4a') {
+          setSelectedQuality(info.formats_audio?.[0]?.value || 'high');
+        } else {
+          setSelectedQuality(info.formats_video?.[0]?.value || '1080p');
+        }
       } else {
-        const defaultVid = info.formats_video?.[0]?.value || '1080p';
-        setSelectedQuality(defaultVid);
+        const results = await searchYouTubeVideos(input);
+        setSearchResults(results);
       }
     } catch (err) {
-      setErrorMsg(err.message || 'Video bilgileri alınamadı.');
+      setErrorMsg(err.message || 'Arama veya video analizi başarısız oldu.');
     } finally {
       setLoadingInfo(false);
     }
   };
 
+  const handleSelectSearchResult = (item) => {
+    setVideoInfo(item);
+    setSelectedVideoUrl(item.url);
+    if (mediaType === 'm4a') {
+      setSelectedQuality(item.formats_audio?.[0]?.value || 'high');
+    } else {
+      setSelectedQuality(item.formats_video?.[0]?.value || '1080p');
+    }
+  };
+
   const handleStartDownload = async () => {
-    if (!url.trim()) return;
+    const targetUrl = (selectedVideoUrl || queryOrUrl).trim();
+    if (!targetUrl) return;
     setErrorMsg('');
     setDownloading(true);
 
     try {
       const res = await startDownload({
-        url: url.trim(),
+        url: targetUrl,
         type: mediaType,
         quality: selectedQuality,
         title: videoInfo?.title || 'Video',
@@ -175,9 +199,9 @@ export default function DownloaderTab({ onSwitchToHistory }) {
     if (!activeTask || !activeTask.filename) return;
     setSavingToDevice(true);
     try {
-      await downloadFileToDevice(activeTask.download_url || '', activeTask.filename);
+      await downloadFileToDevice(activeTask.download_url || '', activeTask.filename, 'open');
     } catch (err) {
-      Alert.alert('Hata', 'Dosya paylaşılamadı: ' + err.message);
+      Alert.alert('Hata', 'Dosya açılamadı: ' + err.message);
     } finally {
       setSavingToDevice(false);
     }
@@ -188,50 +212,62 @@ export default function DownloaderTab({ onSwitchToHistory }) {
       style={styles.container}
       contentContainerStyle={styles.contentContainer}
       showsVerticalScrollIndicator={false}
+      keyboardShouldPersistTaps="handled"
     >
       {/* Başlık & Slogan */}
       <View style={styles.headerArea}>
-        <Text style={styles.appTitle}>YouTube Medya İndirici</Text>
+        <Text style={styles.appTitle}>YouTube Arama & Medya İndirici</Text>
         <Text style={styles.appSubtitle}>
-          YouTube videolarını yüksek kalitede M4A (Ses) veya MP4 (Video) olarak doğrudan telefonunuza indirin.
+          İstediğiniz şarkı veya videoyu doğrudan aratıp yüksek kalitede M4A (Ses) veya Full HD MP4 (Video) olarak indirin.
         </Text>
       </View>
 
-      {/* URL Giriş Kartı */}
+      {/* Arama Motoru & URL Giriş Kartı */}
       <View style={styles.card}>
-        <Text style={styles.inputLabel}>YouTube Video veya Shorts Linki</Text>
+        <Text style={styles.inputLabel}>
+          YouTube'da Şarkı / Video Ara veya Link Yapıştır
+        </Text>
         <View style={styles.inputWrapper}>
-          <Ionicons name="link-outline" size={20} color="#94A3B8" style={styles.linkIcon} />
+          <Ionicons name="search-outline" size={20} color="#2563EB" style={styles.linkIcon} />
           <TextInput
             ref={urlInputRef}
             style={styles.textInput}
-            placeholder="https://youtu.be/... veya youtube.com/watch..."
+            placeholder="Şarkı/sanatçı adı yazın veya link yapıştırın..."
             placeholderTextColor="#64748B"
-            value={url}
+            value={queryOrUrl}
             onChangeText={(txt) => {
-              setUrl(txt);
+              setQueryOrUrl(txt);
               if (errorMsg) setErrorMsg('');
             }}
+            onSubmitEditing={handleSearchOrFetch}
+            returnKeyType="search"
             autoCapitalize="none"
             autoCorrect={false}
           />
-          {url.length > 0 && (
-            <TouchableOpacity onPress={() => setUrl('')} style={styles.clearBtn}>
+          {queryOrUrl.length > 0 && (
+            <TouchableOpacity
+              onPress={() => {
+                setQueryOrUrl('');
+                setSearchResults([]);
+                setVideoInfo(null);
+              }}
+              style={styles.clearBtn}
+            >
               <Ionicons name="close-circle" size={18} color="#94A3B8" />
             </TouchableOpacity>
           )}
         </View>
 
-        {/* Butonlar: Panodan Yapıştır & Bilgileri Getir */}
+        {/* Butonlar: Panodan Yapıştır & Ara / Analiz Et */}
         <View style={styles.inputButtonsRow}>
           <TouchableOpacity style={styles.pasteBtn} onPress={handlePaste}>
-            <Ionicons name="clipboard-outline" size={16} color="#E2E8F0" />
-            <Text style={styles.pasteBtnText}>Panodan Yapıştır</Text>
+            <Ionicons name="clipboard-outline" size={16} color="#334155" />
+            <Text style={styles.pasteBtnText}>Link Yapıştır</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
             style={[styles.fetchBtn, loadingInfo && { opacity: 0.7 }]}
-            onPress={handleFetchInfo}
+            onPress={handleSearchOrFetch}
             disabled={loadingInfo}
           >
             {loadingInfo ? (
@@ -239,7 +275,9 @@ export default function DownloaderTab({ onSwitchToHistory }) {
             ) : (
               <>
                 <Ionicons name="search" size={16} color="#FFFFFF" />
-                <Text style={styles.fetchBtnText}>Analiz Et</Text>
+                <Text style={styles.fetchBtnText}>
+                  {isLikelyYouTubeUrl(queryOrUrl) ? 'Analiz Et' : 'YouTube\'da Ara'}
+                </Text>
               </>
             )}
           </TouchableOpacity>
@@ -254,9 +292,81 @@ export default function DownloaderTab({ onSwitchToHistory }) {
         ) : null}
       </View>
 
-      {/* Video Önizleme Kartı */}
+      {/* YouTube Arama Sonuçları Listesi (Kullanıcı bir video seçmediyse gösterilir) */}
+      {!videoInfo && searchResults.length > 0 && (
+        <View style={styles.card}>
+          <View style={styles.searchResultsHeader}>
+            <View style={styles.searchHeaderLeft}>
+              <Ionicons name="logo-youtube" size={18} color="#EF4444" />
+              <Text style={styles.searchResultsTitle}>
+                Arama Sonuçları ({searchResults.length})
+              </Text>
+            </View>
+            <Text style={styles.searchResultsHint}>İndirmek için dokunun</Text>
+          </View>
+
+          <View style={styles.searchResultsList}>
+            {searchResults.map((item) => (
+              <TouchableOpacity
+                key={item.id}
+                style={styles.searchResultRow}
+                activeOpacity={0.75}
+                onPress={() => handleSelectSearchResult(item)}
+              >
+                <View style={styles.searchThumbBox}>
+                  {item.thumbnail ? (
+                    <Image
+                      source={{ uri: item.thumbnail }}
+                      style={styles.searchThumbImg}
+                      resizeMode="cover"
+                    />
+                  ) : (
+                    <View style={styles.searchThumbFallback}>
+                      <Ionicons name="play" size={18} color="#FFFFFF" />
+                    </View>
+                  )}
+                  {item.duration ? (
+                    <View style={styles.durationBadge}>
+                      <Text style={styles.durationText}>{item.duration}</Text>
+                    </View>
+                  ) : null}
+                </View>
+
+                <View style={styles.searchResultMeta}>
+                  <Text style={styles.searchResultItemTitle} numberOfLines={2}>
+                    {item.title}
+                  </Text>
+                  <Text style={styles.searchResultSub} numberOfLines={1}>
+                    {item.channel}
+                    {item.view_count ? ` • ${item.view_count} görüntüleme` : ''}
+                  </Text>
+                </View>
+
+                <View style={styles.selectPill}>
+                  <Ionicons name="download-outline" size={16} color="#2563EB" />
+                </View>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+      )}
+
+      {/* Seçilen Video Önizleme & İndirme Kartı */}
       {videoInfo && (
         <View style={styles.card}>
+          {/* Eğer arama sonuçlarından seçildiyse geri dönüş butonu */}
+          {searchResults.length > 0 && (
+            <TouchableOpacity
+              style={styles.backToSearchBtn}
+              onPress={() => setVideoInfo(null)}
+            >
+              <Ionicons name="arrow-back" size={15} color="#2563EB" />
+              <Text style={styles.backToSearchText}>
+                Diğer Arama Sonuçlarına Dön ({searchResults.length})
+              </Text>
+            </TouchableOpacity>
+          )}
+
           <View style={styles.previewHeader}>
             <View style={styles.thumbnailContainer}>
               <Image
@@ -314,7 +424,7 @@ export default function DownloaderTab({ onSwitchToHistory }) {
                   mediaType === 'm4a' && styles.formatTabTextActive,
                 ]}
               >
-                M4A (Ses)
+                M4A (Ses / Şarkı)
               </Text>
             </TouchableOpacity>
 
@@ -340,7 +450,7 @@ export default function DownloaderTab({ onSwitchToHistory }) {
                   mediaType === 'mp4' && styles.formatTabTextActive,
                 ]}
               >
-                MP4 (Video)
+                MP4 (HD Video)
               </Text>
             </TouchableOpacity>
           </View>
@@ -401,7 +511,7 @@ export default function DownloaderTab({ onSwitchToHistory }) {
                   color="#FFFFFF"
                 />
                 <Text style={styles.downloadActionBtnText}>
-                  {mediaType === 'm4a' ? 'M4A Ses Olarak İndir' : 'MP4 Video Olarak İndir'}
+                  {mediaType === 'm4a' ? 'M4A Şarkı Olarak İndir' : 'MP4 HD Video Olarak İndir'}
                 </Text>
               </>
             )}
@@ -419,7 +529,7 @@ export default function DownloaderTab({ onSwitchToHistory }) {
                   styles.typeBadge,
                   {
                     backgroundColor:
-                      activeTask.type === 'm4a' || activeTask.type === 'mp3' ? '#1E3A8A' : '#14532D',
+                      activeTask.type === 'm4a' || activeTask.type === 'mp3' ? '#4F46E5' : '#0284C7',
                   },
                 ]}
               >
@@ -453,7 +563,7 @@ export default function DownloaderTab({ onSwitchToHistory }) {
               {activeTask.status === 'downloading' &&
                 `⚡ İndiriliyor ${activeTask.speed ? '(' + activeTask.speed + ')' : ''}`}
               {activeTask.status === 'processing' && '🎬 Birleştiriliyor...'}
-              {activeTask.status === 'completed' && '✅ İndirilenler/MediaToolkit klasörüne kaydedildi!'}
+              {activeTask.status === 'completed' && '✅ İndirilenler listesine kaydedildi!'}
               {activeTask.status === 'failed' && '❌ İndirme Başarısız Oldu'}
             </Text>
 
@@ -462,32 +572,26 @@ export default function DownloaderTab({ onSwitchToHistory }) {
             ) : null}
           </View>
 
-          {/* Tamamlandıysa: Dosyayı Paylaş / Aç Butonu */}
+          {/* Tamamlandıysa: İndirilenlere Git / Oynat Butonu */}
           {activeTask.status === 'completed' && (
             <View style={styles.completedActions}>
               <TouchableOpacity
                 style={styles.saveFileBtn}
-                onPress={handleSaveToDevice}
-                disabled={savingToDevice}
+                onPress={onSwitchToHistory}
               >
-                {savingToDevice ? (
-                  <ActivityIndicator size="small" color="#FFFFFF" />
-                ) : (
-                  <>
-                    <Ionicons name="share-outline" size={18} color="#FFFFFF" />
-                    <Text style={styles.saveFileBtnText}>
-                      Dosyayı Aç / Paylaş
-                    </Text>
-                  </>
-                )}
+                <Ionicons name="musical-notes" size={18} color="#FFFFFF" />
+                <Text style={styles.saveFileBtnText}>
+                  İndirilenlere Git & Oynat
+                </Text>
               </TouchableOpacity>
 
               <TouchableOpacity
                 style={styles.historyShortcutBtn}
-                onPress={onSwitchToHistory}
+                onPress={handleSaveToDevice}
+                disabled={savingToDevice}
               >
-                <Ionicons name="folder-open-outline" size={16} color="#94A3B8" />
-                <Text style={styles.historyShortcutText}>İndirilenlere Git</Text>
+                <Ionicons name="share-social-outline" size={16} color="#2563EB" />
+                <Text style={styles.historyShortcutText}>Aç / Paylaş</Text>
               </TouchableOpacity>
             </View>
           )}
@@ -503,29 +607,29 @@ const styles = StyleSheet.create({
     backgroundColor: '#F8FAFC',
   },
   contentContainer: {
-    padding: 16,
-    paddingBottom: 40,
+    padding: 15,
+    paddingBottom: 32,
   },
   headerArea: {
-    marginBottom: 16,
+    marginBottom: 14,
   },
   appTitle: {
-    fontSize: 22,
+    fontSize: 20,
     fontWeight: '800',
     color: '#0F172A',
     letterSpacing: -0.5,
   },
   appSubtitle: {
-    fontSize: 13,
+    fontSize: 12.5,
     color: '#64748B',
-    marginTop: 4,
+    marginTop: 3,
     lineHeight: 18,
   },
   card: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 16,
+    borderRadius: 15,
+    padding: 14,
+    marginBottom: 14,
     borderWidth: 1,
     borderColor: '#E2E8F0',
     shadowColor: '#000',
@@ -535,7 +639,7 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   inputLabel: {
-    fontSize: 13,
+    fontSize: 12.5,
     fontWeight: '700',
     color: '#334155',
     marginBottom: 8,
@@ -554,9 +658,9 @@ const styles = StyleSheet.create({
   },
   textInput: {
     flex: 1,
-    height: 46,
+    height: 44,
     color: '#0F172A',
-    fontSize: 14,
+    fontSize: 13.5,
   },
   clearBtn: {
     padding: 4,
@@ -564,33 +668,33 @@ const styles = StyleSheet.create({
   inputButtonsRow: {
     flexDirection: 'row',
     gap: 10,
-    marginTop: 12,
+    marginTop: 10,
   },
   pasteBtn: {
-    flex: 1,
+    flex: 0.9,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
     backgroundColor: '#F1F5F9',
-    height: 42,
+    height: 40,
     borderRadius: 10,
     borderWidth: 1,
     borderColor: '#CBD5E1',
   },
   pasteBtnText: {
     color: '#334155',
-    fontSize: 13,
+    fontSize: 12.5,
     fontWeight: '600',
   },
   fetchBtn: {
-    flex: 1,
+    flex: 1.1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
     backgroundColor: '#2563EB',
-    height: 42,
+    height: 40,
     borderRadius: 10,
     shadowColor: '#2563EB',
     shadowOpacity: 0.25,
@@ -618,14 +722,111 @@ const styles = StyleSheet.create({
     fontSize: 12,
     flex: 1,
   },
+  // Arama Sonuçları Stilleri
+  searchResultsHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  searchHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  searchResultsTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  searchResultsHint: {
+    fontSize: 11,
+    color: '#64748B',
+    fontWeight: '600',
+  },
+  searchResultsList: {
+    gap: 8,
+  },
+  searchResultRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderRadius: 11,
+    padding: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    gap: 10,
+  },
+  searchThumbBox: {
+    width: 84,
+    height: 50,
+    borderRadius: 8,
+    overflow: 'hidden',
+    backgroundColor: '#0F172A',
+    position: 'relative',
+  },
+  searchThumbImg: {
+    width: '100%',
+    height: '100%',
+  },
+  searchThumbFallback: {
+    width: '100%',
+    height: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#1E293B',
+  },
+  searchResultMeta: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  searchResultItemTitle: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#0F172A',
+    lineHeight: 16,
+  },
+  searchResultSub: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 3,
+  },
+  selectPill: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  backToSearchBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    alignSelf: 'flex-start',
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    marginBottom: 12,
+  },
+  backToSearchText: {
+    color: '#2563EB',
+    fontSize: 11.5,
+    fontWeight: '700',
+  },
   previewHeader: {
     flexDirection: 'row',
     gap: 12,
-    marginBottom: 16,
+    marginBottom: 14,
   },
   thumbnailContainer: {
-    width: 120,
-    height: 75,
+    width: 116,
+    height: 70,
     borderRadius: 10,
     overflow: 'hidden',
     position: 'relative',
@@ -637,16 +838,16 @@ const styles = StyleSheet.create({
   },
   durationBadge: {
     position: 'absolute',
-    bottom: 4,
-    right: 4,
+    bottom: 3,
+    right: 3,
     backgroundColor: 'rgba(0,0,0,0.85)',
-    paddingHorizontal: 5,
-    paddingVertical: 2,
+    paddingHorizontal: 4,
+    paddingVertical: 1.5,
     borderRadius: 4,
   },
   durationText: {
     color: '#FFFFFF',
-    fontSize: 10,
+    fontSize: 9.5,
     fontWeight: '700',
   },
   videoMeta: {
@@ -654,7 +855,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   videoTitle: {
-    fontSize: 14,
+    fontSize: 13.5,
     fontWeight: '700',
     color: '#0F172A',
     lineHeight: 18,
@@ -663,7 +864,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    marginTop: 4,
+    marginTop: 3,
   },
   channelText: {
     fontSize: 12,
@@ -680,18 +881,18 @@ const styles = StyleSheet.create({
     color: '#94A3B8',
   },
   sectionLabel: {
-    fontSize: 13,
+    fontSize: 12.5,
     fontWeight: '700',
     color: '#334155',
-    marginBottom: 8,
-    marginTop: 6,
+    marginBottom: 7,
+    marginTop: 4,
   },
   formatToggleContainer: {
     flexDirection: 'row',
     backgroundColor: '#F1F5F9',
-    borderRadius: 12,
+    borderRadius: 11,
     padding: 4,
-    marginBottom: 14,
+    marginBottom: 12,
     borderWidth: 1,
     borderColor: '#E2E8F0',
   },
@@ -700,8 +901,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
-    paddingVertical: 10,
+    gap: 7,
+    paddingVertical: 9,
     borderRadius: 8,
   },
   formatTabActive: {
@@ -713,22 +914,22 @@ const styles = StyleSheet.create({
   },
   formatTabText: {
     color: '#64748B',
-    fontSize: 13,
+    fontSize: 12.5,
     fontWeight: '600',
   },
   formatTabTextActive: {
     color: '#FFFFFF',
   },
   qualityList: {
-    gap: 8,
-    marginBottom: 16,
+    gap: 7,
+    marginBottom: 14,
   },
   qualityChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 9,
     backgroundColor: '#FFFFFF',
-    paddingVertical: 10,
+    paddingVertical: 9,
     paddingHorizontal: 12,
     borderRadius: 10,
     borderWidth: 1,
@@ -740,7 +941,7 @@ const styles = StyleSheet.create({
   },
   qualityChipText: {
     color: '#475569',
-    fontSize: 13,
+    fontSize: 12.5,
     fontWeight: '500',
   },
   qualityChipTextSelected: {
@@ -753,7 +954,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 8,
     backgroundColor: '#2563EB',
-    height: 48,
+    height: 46,
     borderRadius: 12,
     shadowColor: '#2563EB',
     shadowOpacity: 0.25,
@@ -762,7 +963,7 @@ const styles = StyleSheet.create({
   },
   downloadActionBtnText: {
     color: '#FFFFFF',
-    fontSize: 15,
+    fontSize: 14.5,
     fontWeight: '700',
   },
   taskCard: {
@@ -799,7 +1000,7 @@ const styles = StyleSheet.create({
   },
   percentText: {
     color: '#2563EB',
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '800',
     marginLeft: 8,
   },
@@ -808,7 +1009,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#E2E8F0',
     borderRadius: 4,
     overflow: 'hidden',
-    marginBottom: 8,
+    marginBottom: 10,
   },
   progressBarFill: {
     height: '100%',
@@ -821,16 +1022,21 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   taskStatusText: {
-    color: '#334155',
+    color: '#475569',
     fontSize: 12,
     fontWeight: '500',
+    flex: 1,
   },
   taskEtaText: {
-    color: '#64748B',
+    color: '#2563EB',
     fontSize: 11,
+    fontWeight: '700',
   },
   completedActions: {
     marginTop: 14,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
     gap: 8,
   },
   saveFileBtn: {
@@ -838,17 +1044,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    backgroundColor: '#16A34A',
-    height: 44,
+    backgroundColor: '#10B981',
+    height: 42,
     borderRadius: 10,
-    shadowColor: '#16A34A',
-    shadowOpacity: 0.25,
-    shadowRadius: 6,
-    elevation: 3,
   },
   saveFileBtnText: {
     color: '#FFFFFF',
-    fontSize: 14,
+    fontSize: 13.5,
     fontWeight: '700',
   },
   historyShortcutBtn: {
@@ -857,10 +1059,14 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 6,
     height: 36,
+    borderRadius: 8,
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
   },
   historyShortcutText: {
     color: '#2563EB',
-    fontSize: 12,
-    fontWeight: '600',
+    fontSize: 12.5,
+    fontWeight: '700',
   },
 });
