@@ -18,8 +18,8 @@ if (Platform.OS === 'android') {
     );
     if (activeId && nativeTasks[activeId]) {
       nativeTasks[activeId].progress = Math.round(progress);
-      nativeTasks[activeId].eta = eta ? `${Math.round(eta)}s` : '';
-      nativeTasks[activeId].speed = line ? line.slice(0, 30) : '';
+      nativeTasks[activeId].eta = eta && eta > 0 ? `${Math.round(eta)}s` : '';
+      nativeTasks[activeId].speed = line ? line.slice(0, 35) : '';
     }
   });
 }
@@ -36,6 +36,37 @@ function normalizeUrl(rawUrl) {
   // Video veya Shorts ID
   return 'https://www.youtube.com/watch?v=' + u;
 }
+
+function formatDuration(sec) {
+  const s = Number(sec) || 0;
+  if (s <= 0) return '';
+  const hrs = Math.floor(s / 3600);
+  const mins = Math.floor((s % 3600) / 60);
+  const rem = Math.floor(s % 60);
+  const pad = (n) => (n < 10 ? `0${n}` : `${n}`);
+  if (hrs > 0) {
+    return `${hrs}:${pad(mins)}:${pad(rem)}`;
+  }
+  return `${mins}:${pad(rem)}`;
+}
+
+function formatViewCount(views) {
+  const v = Number(views) || 0;
+  if (v <= 0) return '';
+  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
+  if (v >= 1_000) return `${(v / 1_000).toFixed(1)}B`;
+  return String(Math.round(v));
+}
+
+const DEFAULT_AUDIO_FORMATS = [
+  { label: 'Yüksek Kalite Ses (M4A / AAC)', value: 'high' },
+  { label: 'Standart Kalite Ses (M4A)', value: '128' },
+];
+
+const DEFAULT_VIDEO_FORMATS = [
+  { label: '1080p Full HD Video (MP4)', value: '1080p' },
+  { label: '720p HD Video (MP4)', value: '720p' },
+];
 
 export async function getLocalHistory() {
   try {
@@ -84,52 +115,46 @@ export async function fetchVideoInfo(url) {
     throw new Error('Lütfen bir YouTube linki yapıştırın.');
   }
 
-  // 1. YouTube Resmi oEmbed Servisi (Tamamen sunucusuz, doğrudan Google'dan)
+  // 1. Önce Cihaz İçi NewPipeExtractor Motoru (Tam süre, kanal, görüntülenme ve çözünürlük bilgisi)
+  if (YoutubeDLNative && YoutubeDLNative.getVideoInfo) {
+    try {
+      const nativeData = await YoutubeDLNative.getVideoInfo(cleanUrl);
+      const ch = nativeData.uploader || 'YouTube';
+      return {
+        title: nativeData.title || 'YouTube Medya',
+        thumbnail: nativeData.thumbnail || '',
+        author: ch,
+        channel: ch,
+        duration: formatDuration(nativeData.duration),
+        view_count: formatViewCount(nativeData.viewCount),
+        formats_audio: DEFAULT_AUDIO_FORMATS,
+        formats_video: DEFAULT_VIDEO_FORMATS,
+      };
+    } catch (err) {
+      console.warn('Native video info uyarısı, oEmbed deneniyor:', err);
+    }
+  }
+
+  // 2. Yedek: YouTube Resmi oEmbed Servisi
   try {
     const oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(cleanUrl)}&format=json`;
     const res = await fetch(oembedUrl);
     if (res.ok) {
       const data = await res.json();
+      const ch = data.author_name || 'YouTube';
       return {
         title: data.title || 'YouTube Medya',
         thumbnail: data.thumbnail_url || '',
-        author: data.author_name || 'YouTube',
-        duration: 0,
-        formats_audio: [
-          { label: '320 kbps (Yüksek Kalite MP3)', value: '320' },
-          { label: '192 kbps (Standart Kalite MP3)', value: '192' },
-        ],
-        formats_video: [
-          { label: '1080p Full HD Video', value: '1080p' },
-          { label: '720p HD Video', value: '720p' },
-        ],
+        author: ch,
+        channel: ch,
+        duration: '',
+        view_count: '',
+        formats_audio: DEFAULT_AUDIO_FORMATS,
+        formats_video: DEFAULT_VIDEO_FORMATS,
       };
     }
   } catch (e) {
     console.log('oEmbed hatası:', e);
-  }
-
-  // 2. Cihaz İçi Yerel Motor (Native Module)
-  if (YoutubeDLNative && YoutubeDLNative.getVideoInfo) {
-    try {
-      const nativeData = await YoutubeDLNative.getVideoInfo(cleanUrl);
-      return {
-        title: nativeData.title || 'YouTube Medya',
-        thumbnail: nativeData.thumbnail || '',
-        author: nativeData.uploader || 'YouTube',
-        duration: nativeData.duration || 0,
-        formats_audio: [
-          { label: '320 kbps (Yüksek Kalite MP3)', value: '320' },
-          { label: '192 kbps (Standart Kalite MP3)', value: '192' },
-        ],
-        formats_video: [
-          { label: '1080p Full HD Video', value: '1080p' },
-          { label: '720p HD Video', value: '720p' },
-        ],
-      };
-    } catch (err) {
-      console.warn('Native video info hatası:', err);
-    }
   }
 
   throw new Error('Video bilgileri alınamadı. Lütfen geçerli bir YouTube video linki yapıştırın.');
@@ -137,10 +162,14 @@ export async function fetchVideoInfo(url) {
 
 export async function startDownload({ url, type, quality, title, thumbnail }) {
   const cleanUrl = normalizeUrl(url);
+  const isAudio = type === 'm4a' || type === 'mp3';
+  const ext = isAudio ? 'm4a' : 'mp4';
 
-  // Yerel Android Motoru (Seal / youtubedl-android)
+  // Yerel Android Motoru (NewPipeExtractor)
   if (YoutubeDLNative && YoutubeDLNative.download) {
     const taskId = `native_${Date.now()}`;
+    const defaultFilename = `${(title || 'YouTube_Medya').replace(/[\\/:*?"<>|]/g, '_')}.${ext}`;
+
     nativeTasks[taskId] = {
       id: taskId,
       status: 'downloading',
@@ -149,35 +178,39 @@ export async function startDownload({ url, type, quality, title, thumbnail }) {
       eta: '',
       title: title || 'YouTube Medya',
       thumbnail: thumbnail || '',
-      type: type,
+      type: isAudio ? 'm4a' : 'mp4',
       quality: quality,
-      filename: `${(title || 'Medya').replace(/[\\/:*?"<>|]/g, '_')}.${type === 'mp3' ? 'mp3' : 'mp4'}`,
+      filename: defaultFilename,
+      download_url: '',
+      filesize: '',
       isNative: true,
     };
 
     (async () => {
       try {
-        const result = await YoutubeDLNative.download(cleanUrl, type, quality);
-        nativeTasks[taskId].status = 'completed';
-        nativeTasks[taskId].progress = 100;
-
-        const defaultFilename = `${(title || 'YouTube Medya').replace(/[\\/:*?"<>|]/g, '_')}.${type === 'mp3' ? 'mp3' : 'mp4'}`;
+        const result = await YoutubeDLNative.download(cleanUrl, isAudio ? 'm4a' : 'mp4', quality);
         const actualFilename = result.fileName || defaultFilename;
         const downloadUrl = result.filePath
           ? `file://${result.filePath}`
           : (result.outputDir ? `file://${result.outputDir}/${actualFilename}` : '');
+        const filesize = result.fileSize || '';
 
+        nativeTasks[taskId].status = 'completed';
+        nativeTasks[taskId].progress = 100;
         nativeTasks[taskId].filename = actualFilename;
         nativeTasks[taskId].download_url = downloadUrl;
+        nativeTasks[taskId].filesize = filesize;
 
         await addLocalHistoryItem({
           id: taskId,
           filename: actualFilename,
           title: title || 'YouTube Medya',
           thumbnail: thumbnail || '',
-          type: type,
+          type: isAudio ? 'm4a' : 'mp4',
           quality: quality,
+          filesize: filesize,
           download_url: downloadUrl,
+          date: 'Bugün',
           createdAt: new Date().toISOString(),
         });
       } catch (err) {
@@ -195,7 +228,7 @@ export async function startDownload({ url, type, quality, title, thumbnail }) {
 
 export async function checkProgress(taskId) {
   if (nativeTasks[taskId]) {
-    return nativeTasks[taskId];
+    return { ...nativeTasks[taskId] };
   }
   return { status: 'failed', error: 'Görev bulunamadı.' };
 }
@@ -209,16 +242,14 @@ export async function deleteHistoryItem(filename) {
   return { success: true };
 }
 
-export async function downloadFileToDevice(relativeUrl, filename, onProgress) {
-  // Eğer zaten file:// protokolü ile yerel telefondaysa doğrudan paylaş
-  if (relativeUrl.startsWith('file://')) {
+export async function downloadFileToDevice(fileUrlOrPath, filename) {
+  if (fileUrlOrPath && fileUrlOrPath.startsWith('file://')) {
     if (await Sharing.isAvailableAsync()) {
-      await Sharing.shareAsync(relativeUrl);
+      await Sharing.shareAsync(fileUrlOrPath);
     }
-    return { success: true, uri: relativeUrl };
+    return { success: true, uri: fileUrlOrPath };
   }
 
-  // FileSystem
   try {
     const cleanFilename = (filename || 'media').replace(/[\\/:*?"<>|]/g, '_').trim();
     const fileUri = `${FileSystem.documentDirectory}${cleanFilename}`;

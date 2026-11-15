@@ -18,7 +18,6 @@ import {
   startDownload,
   checkProgress,
   downloadFileToDevice,
-  addLocalHistoryItem,
 } from '../services/api';
 
 export default function DownloaderTab({ onSwitchToHistory }) {
@@ -27,9 +26,9 @@ export default function DownloaderTab({ onSwitchToHistory }) {
   const [videoInfo, setVideoInfo] = useState(null);
   const [errorMsg, setErrorMsg] = useState('');
 
-  // Format selection
-  const [mediaType, setMediaType] = useState('mp3'); // 'mp3' or 'mp4'
-  const [selectedQuality, setSelectedQuality] = useState('320');
+  // Format selection ('m4a' or 'mp4')
+  const [mediaType, setMediaType] = useState('m4a');
+  const [selectedQuality, setSelectedQuality] = useState('high');
 
   // Active Download state
   const [activeTask, setActiveTask] = useState(null);
@@ -38,7 +37,6 @@ export default function DownloaderTab({ onSwitchToHistory }) {
   const pollTimerRef = useRef(null);
   const urlInputRef = useRef(null);
 
-  // Clear polling on unmount
   useEffect(() => {
     return () => {
       if (pollTimerRef.current) clearInterval(pollTimerRef.current);
@@ -48,7 +46,6 @@ export default function DownloaderTab({ onSwitchToHistory }) {
   const cleanAndSetUrl = (rawText) => {
     if (!rawText) return false;
     const trimmed = String(rawText).trim();
-    // YouTube linklerini metin icinden cikar (ozellikle mobilde 'Paylas' deyince baslik + link kopyalanir)
     const urlMatch = trimmed.match(/https?:\/\/(www\.)?(youtube\.com|youtu\.be)\/[^\s]+/i);
     if (urlMatch) {
       setUrl(urlMatch[0]);
@@ -73,7 +70,6 @@ export default function DownloaderTab({ onSwitchToHistory }) {
     setErrorMsg('');
     let pastedText = '';
 
-    // 1. Web standart Navigator Clipboard (Safari/Chrome)
     if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.readText) {
       try {
         pastedText = await navigator.clipboard.readText();
@@ -82,7 +78,6 @@ export default function DownloaderTab({ onSwitchToHistory }) {
       }
     }
 
-    // 2. Expo Clipboard alternatifi
     if (!pastedText) {
       try {
         pastedText = await Clipboard.getStringAsync();
@@ -93,11 +88,10 @@ export default function DownloaderTab({ onSwitchToHistory }) {
 
     const success = cleanAndSetUrl(pastedText);
     if (!success) {
-      // Eger tarayici guvenligi engellediyse kutuya odaklan ve klavye ac
       if (urlInputRef.current) {
         urlInputRef.current.focus();
       }
-      setErrorMsg('Safari panoyu otomatik okumaya izin vermedi. Lutfen yukaridaki kutucuga dokunup "Yapistir" secin.');
+      setErrorMsg('Panoda geçerli bir bağlantı bulunamadı. Lütfen kutucuğa dokunup yapıştırın.');
     }
   };
 
@@ -113,11 +107,10 @@ export default function DownloaderTab({ onSwitchToHistory }) {
     try {
       const info = await fetchVideoInfo(url.trim());
       setVideoInfo(info);
-      // Default to 320 for mp3, or 720 for mp4
-      if (mediaType === 'mp3') {
-        setSelectedQuality('320');
+      if (mediaType === 'm4a') {
+        setSelectedQuality(info.formats_audio?.[0]?.value || 'high');
       } else {
-        const defaultVid = info.formats_video?.[0]?.value || '720';
+        const defaultVid = info.formats_video?.[0]?.value || '1080p';
         setSelectedQuality(defaultVid);
       }
     } catch (err) {
@@ -144,14 +137,16 @@ export default function DownloaderTab({ onSwitchToHistory }) {
       const taskId = res.taskId;
       setActiveTask({
         id: taskId,
-        status: 'queued',
+        status: 'downloading',
         progress: 0,
-        speed: '',
+        speed: 'Başlatılıyor...',
         eta: '',
+        type: mediaType,
+        title: videoInfo?.title || 'İndiriliyor...',
         filename: null,
+        download_url: '',
       });
 
-      // Poll progress every 1 second
       if (pollTimerRef.current) clearInterval(pollTimerRef.current);
       pollTimerRef.current = setInterval(async () => {
         try {
@@ -161,18 +156,6 @@ export default function DownloaderTab({ onSwitchToHistory }) {
           if (taskData.status === 'completed' || taskData.status === 'failed') {
             clearInterval(pollTimerRef.current);
             setDownloading(false);
-            if (taskData.status === 'completed' && taskData.filename) {
-              await addLocalHistoryItem({
-                id: taskData.id,
-                filename: taskData.filename,
-                title: taskData.title,
-                type: taskData.type,
-                quality: taskData.quality,
-                filesize: taskData.filesize,
-                download_url: `/api/files/${taskData.id}`,
-                date: 'Bugün',
-              });
-            }
             if (taskData.status === 'failed') {
               setErrorMsg(taskData.error || 'İndirme sırasında bir hata oluştu.');
             }
@@ -180,7 +163,7 @@ export default function DownloaderTab({ onSwitchToHistory }) {
         } catch (e) {
           console.warn('Progress poll hatası:', e);
         }
-      }, 1000);
+      }, 500);
     } catch (err) {
       setErrorMsg(err.message || 'İndirme başlatılamadı.');
       setDownloading(false);
@@ -191,13 +174,9 @@ export default function DownloaderTab({ onSwitchToHistory }) {
     if (!activeTask || !activeTask.filename) return;
     setSavingToDevice(true);
     try {
-      const relUrl = activeTask.id ? `/api/files/${activeTask.id}` : `/api/download-direct/${encodeURIComponent(activeTask.filename)}`;
-      await downloadFileToDevice(relUrl, activeTask.filename);
-      if (Platform.OS !== 'web') {
-        Alert.alert('Başarılı', 'Dosya cihazınıza kaydedildi / paylaşıldı!');
-      }
+      await downloadFileToDevice(activeTask.download_url || '', activeTask.filename);
     } catch (err) {
-      Alert.alert('Hata', 'Dosya cihaza kaydedilemedi: ' + err.message);
+      Alert.alert('Hata', 'Dosya paylaşılamadı: ' + err.message);
     } finally {
       setSavingToDevice(false);
     }
@@ -213,7 +192,7 @@ export default function DownloaderTab({ onSwitchToHistory }) {
       <View style={styles.headerArea}>
         <Text style={styles.appTitle}>YouTube Medya İndirici</Text>
         <Text style={styles.appSubtitle}>
-          YouTube videolarını yüksek kalitede MP3 veya MP4 olarak telefonunuza indirin.
+          YouTube videolarını yüksek kalitede M4A (Ses) veya MP4 (Video) olarak doğrudan telefonunuza indirin.
         </Text>
       </View>
 
@@ -284,9 +263,11 @@ export default function DownloaderTab({ onSwitchToHistory }) {
                 style={styles.thumbnail}
                 resizeMode="cover"
               />
-              <View style={styles.durationBadge}>
-                <Text style={styles.durationText}>{videoInfo.duration}</Text>
-              </View>
+              {videoInfo.duration ? (
+                <View style={styles.durationBadge}>
+                  <Text style={styles.durationText}>{videoInfo.duration}</Text>
+                </View>
+              ) : null}
             </View>
 
             <View style={styles.videoMeta}>
@@ -296,41 +277,43 @@ export default function DownloaderTab({ onSwitchToHistory }) {
               <View style={styles.channelRow}>
                 <Ionicons name="person-circle-outline" size={14} color="#94A3B8" />
                 <Text style={styles.channelText} numberOfLines={1}>
-                  {videoInfo.channel}
+                  {videoInfo.channel || videoInfo.author || 'YouTube'}
                 </Text>
               </View>
-              <View style={styles.viewsRow}>
-                <Ionicons name="eye-outline" size={14} color="#64748B" />
-                <Text style={styles.viewsText}>{videoInfo.view_count} görüntüleme</Text>
-              </View>
+              {videoInfo.view_count ? (
+                <View style={styles.viewsRow}>
+                  <Ionicons name="eye-outline" size={14} color="#64748B" />
+                  <Text style={styles.viewsText}>{videoInfo.view_count} görüntüleme</Text>
+                </View>
+              ) : null}
             </View>
           </View>
 
-          {/* Format Seçimi: MP3 vs MP4 */}
+          {/* Format Seçimi: M4A vs MP4 */}
           <Text style={styles.sectionLabel}>İndirme Formatı</Text>
           <View style={styles.formatToggleContainer}>
             <TouchableOpacity
               style={[
                 styles.formatTab,
-                mediaType === 'mp3' && styles.formatTabActive,
+                mediaType === 'm4a' && styles.formatTabActive,
               ]}
               onPress={() => {
-                setMediaType('mp3');
-                setSelectedQuality('320');
+                setMediaType('m4a');
+                setSelectedQuality(videoInfo.formats_audio?.[0]?.value || 'high');
               }}
             >
               <Ionicons
                 name="musical-notes"
                 size={18}
-                color={mediaType === 'mp3' ? '#FFFFFF' : '#64748B'}
+                color={mediaType === 'm4a' ? '#FFFFFF' : '#64748B'}
               />
               <Text
                 style={[
                   styles.formatTabText,
-                  mediaType === 'mp3' && styles.formatTabTextActive,
+                  mediaType === 'm4a' && styles.formatTabTextActive,
                 ]}
               >
-                MP3 (Ses)
+                M4A (Ses)
               </Text>
             </TouchableOpacity>
 
@@ -341,7 +324,7 @@ export default function DownloaderTab({ onSwitchToHistory }) {
               ]}
               onPress={() => {
                 setMediaType('mp4');
-                const defaultVid = videoInfo.formats_video?.[0]?.value || '720';
+                const defaultVid = videoInfo.formats_video?.[0]?.value || '1080p';
                 setSelectedQuality(defaultVid);
               }}
             >
@@ -363,10 +346,10 @@ export default function DownloaderTab({ onSwitchToHistory }) {
 
           {/* Kalite Seçenekleri */}
           <Text style={styles.sectionLabel}>
-            {mediaType === 'mp3' ? 'Ses Kalitesi (Bitrate)' : 'Video Çözünürlüğü'}
+            {mediaType === 'm4a' ? 'Ses Kalitesi' : 'Video Çözünürlüğü'}
           </Text>
           <View style={styles.qualityList}>
-            {(mediaType === 'mp3'
+            {(mediaType === 'm4a'
               ? videoInfo.formats_audio
               : videoInfo.formats_video
             )?.map((fmt) => {
@@ -412,12 +395,12 @@ export default function DownloaderTab({ onSwitchToHistory }) {
             ) : (
               <>
                 <Ionicons
-                  name={mediaType === 'mp3' ? 'musical-note' : 'download'}
+                  name={mediaType === 'm4a' ? 'musical-note' : 'download'}
                   size={20}
                   color="#FFFFFF"
                 />
                 <Text style={styles.downloadActionBtnText}>
-                  {mediaType === 'mp3' ? 'MP3 Olarak İndir' : 'MP4 Olarak İndir'}
+                  {mediaType === 'm4a' ? 'M4A Ses Olarak İndir' : 'MP4 Video Olarak İndir'}
                 </Text>
               </>
             )}
@@ -435,12 +418,12 @@ export default function DownloaderTab({ onSwitchToHistory }) {
                   styles.typeBadge,
                   {
                     backgroundColor:
-                      activeTask.type === 'mp3' ? '#1E3A8A' : '#14532D',
+                      activeTask.type === 'm4a' || activeTask.type === 'mp3' ? '#1E3A8A' : '#14532D',
                   },
                 ]}
               >
                 <Text style={styles.typeBadgeText}>
-                  {activeTask.type === 'mp3' ? 'MP3' : 'MP4'}
+                  {activeTask.type === 'm4a' || activeTask.type === 'mp3' ? 'M4A' : 'MP4'}
                 </Text>
               </View>
               <Text style={styles.taskTitle} numberOfLines={1}>
@@ -465,11 +448,11 @@ export default function DownloaderTab({ onSwitchToHistory }) {
           {/* Durum & Hız Bilgileri */}
           <View style={styles.taskMetaRow}>
             <Text style={styles.taskStatusText}>
-              {activeTask.status === 'queued' && '⏳ Kuyrukta bekleniyor...'}
+              {activeTask.status === 'queued' && '⏳ Hazırlanıyor...'}
               {activeTask.status === 'downloading' &&
                 `⚡ İndiriliyor ${activeTask.speed ? '(' + activeTask.speed + ')' : ''}`}
-              {activeTask.status === 'processing' && '🎬 FFmpeg ile dönüştürülüyor...'}
-              {activeTask.status === 'completed' && '✅ İndirme ve Dönüştürme Tamamlandı!'}
+              {activeTask.status === 'processing' && '🎬 Birleştiriliyor...'}
+              {activeTask.status === 'completed' && '✅ İndirilenler/MediaToolkit klasörüne kaydedildi!'}
               {activeTask.status === 'failed' && '❌ İndirme Başarısız Oldu'}
             </Text>
 
@@ -478,7 +461,7 @@ export default function DownloaderTab({ onSwitchToHistory }) {
             ) : null}
           </View>
 
-          {/* Tamamlandıysa: Cihaza Kaydet Butonu */}
+          {/* Tamamlandıysa: Dosyayı Paylaş / Aç Butonu */}
           {activeTask.status === 'completed' && (
             <View style={styles.completedActions}>
               <TouchableOpacity
@@ -490,9 +473,9 @@ export default function DownloaderTab({ onSwitchToHistory }) {
                   <ActivityIndicator size="small" color="#FFFFFF" />
                 ) : (
                   <>
-                    <Ionicons name="cloud-download" size={18} color="#FFFFFF" />
+                    <Ionicons name="share-outline" size={18} color="#FFFFFF" />
                     <Text style={styles.saveFileBtnText}>
-                      Telefona Kaydet / İndir
+                      Dosyayı Aç / Paylaş
                     </Text>
                   </>
                 )}

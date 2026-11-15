@@ -41,11 +41,8 @@ export default function HistoryTab({ onSwitchToDownloader }) {
     setActionLoading(item.filename);
     try {
       await downloadFileToDevice(item.download_url, item.filename);
-      if (Platform.OS !== 'web') {
-        Alert.alert('Başarılı', `${item.filename} cihazınıza kaydedildi / paylaşıldı.`);
-      }
     } catch (e) {
-      Alert.alert('Hata', 'Dosya indirilemedi: ' + e.message);
+      Alert.alert('Hata', 'Dosya açılamadı: ' + e.message);
     } finally {
       setActionLoading(null);
     }
@@ -68,7 +65,7 @@ export default function HistoryTab({ onSwitchToDownloader }) {
     } else {
       Alert.alert(
         'Dosyayı Sil',
-        `'${filename}' dosyasını silmek istediğinize emin misiniz?`,
+        `'${filename}' dosyasını listeden silmek istediğinize emin misiniz?`,
         [
           { text: 'İptal', style: 'cancel' },
           { text: 'Sil', style: 'destructive', onPress: doDelete },
@@ -78,7 +75,14 @@ export default function HistoryTab({ onSwitchToDownloader }) {
   };
 
   const renderItem = ({ item }) => {
-    const isMp3 = item.type === 'mp3' || item.filename.endsWith('.mp3');
+    const fname = item.filename || '';
+    const isAudio =
+      item.type === 'm4a' ||
+      item.type === 'mp3' ||
+      fname.endsWith('.m4a') ||
+      fname.endsWith('.mp3') ||
+      fname.endsWith('.webm');
+    const badgeLabel = fname.endsWith('.mp3') ? 'MP3' : isAudio ? 'M4A' : 'MP4';
     const isCurrentAction = actionLoading === item.filename;
 
     return (
@@ -87,15 +91,15 @@ export default function HistoryTab({ onSwitchToDownloader }) {
           <View
             style={[
               styles.typeBadge,
-              { backgroundColor: isMp3 ? '#4F46E5' : '#0284C7' },
+              { backgroundColor: isAudio ? '#4F46E5' : '#0284C7' },
             ]}
           >
             <Ionicons
-              name={isMp3 ? 'musical-notes' : 'videocam'}
+              name={isAudio ? 'musical-notes' : 'videocam'}
               size={12}
               color="#FFFFFF"
             />
-            <Text style={styles.typeBadgeText}>{isMp3 ? 'MP3' : 'MP4'}</Text>
+            <Text style={styles.typeBadgeText}>{badgeLabel}</Text>
           </View>
 
           <Text style={styles.dateText}>{item.date || 'Bugün'}</Text>
@@ -106,12 +110,14 @@ export default function HistoryTab({ onSwitchToDownloader }) {
         </Text>
 
         <View style={styles.metaRow}>
-          <Text style={styles.sizeText}>{item.filesize || 'Bilinmiyor'}</Text>
-          {item.quality && (
+          {item.filesize ? (
+            <Text style={styles.sizeText}>{item.filesize}</Text>
+          ) : null}
+          {item.quality ? (
             <Text style={styles.qualityText}>
-              Kalite: {item.quality} {isMp3 ? 'kbps' : 'p'}
+              Kalite: {item.quality === 'high' ? 'Yüksek (AAC)' : item.quality}
             </Text>
-          )}
+          ) : null}
         </View>
 
         {/* Aksiyon butonları */}
@@ -125,8 +131,8 @@ export default function HistoryTab({ onSwitchToDownloader }) {
               <ActivityIndicator size="small" color="#FFFFFF" />
             ) : (
               <>
-                <Ionicons name="cloud-download-outline" size={16} color="#FFFFFF" />
-                <Text style={styles.downloadBtnText}>Telefona İndir</Text>
+                <Ionicons name="share-outline" size={16} color="#FFFFFF" />
+                <Text style={styles.downloadBtnText}>Paylaş / Aç</Text>
               </>
             )}
           </TouchableOpacity>
@@ -180,7 +186,7 @@ export default function HistoryTab({ onSwitchToDownloader }) {
           onPress={onSwitchToDownloader}
         >
           <Ionicons name="add-circle" size={18} color="#2563EB" />
-          <Text style={styles.newDownloadPillText}>+ Yeni Video / MP3 İndir</Text>
+          <Text style={styles.newDownloadPillText}>+ Yeni Video / Ses İndir</Text>
         </TouchableOpacity>
       )}
 
@@ -190,7 +196,7 @@ export default function HistoryTab({ onSwitchToDownloader }) {
           <Ionicons name="cloud-download-outline" size={56} color="#CBD5E1" />
           <Text style={styles.emptyTitle}>Henüz indirme yok</Text>
           <Text style={styles.emptyText}>
-            YouTube'dan bir link yapıştırıp MP3 veya MP4 olarak indirdiğinizde burada listelenecektir.
+            YouTube'dan bir link yapıştırıp M4A (Ses) veya MP4 (Video) olarak indirdiğinizde burada listelenecektir.
           </Text>
           <TouchableOpacity
             style={styles.goToDownloadBtn}
