@@ -225,6 +225,8 @@ export default function App() {
         {activeTab === 'downloader' ? (
           <DownloaderTab
             isDarkMode={isDarkMode}
+            playerState={playerState}
+            onOpenExpandedPlayer={() => setExpandedPlayerVisible(true)}
             onSwitchToHistory={() => setActiveTab('history')}
           />
         ) : (
@@ -761,8 +763,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderTopWidth: 1,
     borderTopColor: '#E2E8F0',
-    paddingTop: 6,
-    paddingBottom: Platform.OS === 'android' ? 24 : 14,
+    paddingTop: 7,
+    paddingBottom: Platform.OS === 'android' ? 38 : 16,
     paddingHorizontal: 24,
     justifyContent: 'space-around',
     alignItems: 'center',

@@ -1152,6 +1152,162 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
         }
     }
 
+    private fun downloadPreviewStreamSilently(
+        streamUrl: String,
+        expectedLength: Long,
+        outputFile: File
+    ) {
+        if (outputFile.exists()) outputFile.delete()
+        val totalBytes = resolveContentLength(streamUrl, expectedLength)
+        var downloadedBytes = 0L
+
+        if (totalBytes > 0L) {
+            val chunkSize = 2L * 1024L * 1024L
+            RandomAccessFile(outputFile, "rw").use { raf ->
+                while (downloadedBytes < totalBytes) {
+                    val rangeStart = downloadedBytes
+                    val rangeEnd = minOf(rangeStart + chunkSize - 1L, totalBytes - 1L)
+                    var attempt = 0
+                    var chunkSuccess = false
+                    var lastError: Exception? = null
+
+                    while (attempt < 3 && !chunkSuccess) {
+                        attempt++
+                        val usePost = attempt >= 3
+                        var conn: HttpURLConnection? = null
+                        try {
+                            conn = openStreamConnection(streamUrl, rangeStart, rangeEnd, usePost = usePost)
+                            val code = conn.responseCode
+                            if (code != 206 && code != 200) {
+                                throw IOException("HTTP $code")
+                            }
+                            raf.seek(if (code == 206) rangeStart else 0L)
+                            if (code == 200 && rangeStart > 0L) {
+                                downloadedBytes = 0L
+                            }
+                            conn.inputStream.use { input ->
+                                val buffer = ByteArray(64 * 1024)
+                                var read: Int
+                                while (input.read(buffer).also { read = it } != -1) {
+                                    raf.write(buffer, 0, read)
+                                    downloadedBytes += read
+                                }
+                            }
+                            chunkSuccess = true
+                            if (code == 200) return
+                        } catch (e: Exception) {
+                            lastError = e
+                            Thread.sleep(250L * attempt)
+                        } finally {
+                            conn?.disconnect()
+                        }
+                    }
+                    if (!chunkSuccess) {
+                        throw IOException("Önizleme akışı alınamadı: ${lastError?.localizedMessage ?: "Bağlantı hatası"}")
+                    }
+                }
+            }
+        } else {
+            val conn = openStreamConnection(streamUrl, -1L, -1L, usePost = false)
+            try {
+                val code = conn.responseCode
+                if (code !in 200..299) throw IOException("HTTP $code")
+                FileOutputStream(outputFile).use { fos ->
+                    conn.inputStream.use { input ->
+                        val buffer = ByteArray(64 * 1024)
+                        var read: Int
+                        while (input.read(buffer).also { read = it } != -1) {
+                            fos.write(buffer, 0, read)
+                        }
+                    }
+                }
+            } finally {
+                conn.disconnect()
+            }
+        }
+    }
+
+    @ReactMethod
+    fun previewAudio(
+        url: String,
+        title: String,
+        uploader: String,
+        thumbnail: String,
+        promise: Promise
+    ) {
+        executor.execute {
+            var tempRaw: File? = null
+            try {
+                MusicPlayerService.reactContextRef = reactContext
+                ensureInit()
+                val info = StreamInfo.getInfo(url)
+
+                // Önizlemenin çok hızlı açılması için önce standart (düşük boyutlu M4A) akışı seç
+                val audioStream = selectBestAudioStream(info.audioStreams, "128")
+                    ?: selectBestAudioStream(info.audioStreams, "high")
+                    ?: throw IOException("Bu medya için önizleme ses akışı bulunamadı.")
+
+                val ext = if (audioStream.format == MediaFormat.M4A) "m4a" else (audioStream.format?.suffix ?: "m4a")
+
+                // Eski önizleme önbellek dosyalarını temizle (telefonda yer kaplamasın)
+                reactContext.cacheDir.listFiles()?.forEach { f ->
+                    if (f.name.startsWith("preview_cache_")) {
+                        try {
+                            f.delete()
+                        } catch (_: Exception) {}
+                    }
+                }
+
+                val stamp = System.currentTimeMillis()
+                tempRaw = File(reactContext.cacheDir, "preview_raw_$stamp.$ext")
+                val previewFile = File(reactContext.cacheDir, "preview_cache_$stamp.$ext")
+
+                val expectedLen = audioStream.itagItem?.contentLength ?: -1L
+                downloadPreviewStreamSilently(audioStream.content, expectedLen, tempRaw)
+
+                if (ext == "m4a") {
+                    try {
+                        remuxAudioToCleanM4a(tempRaw, previewFile)
+                    } catch (_: Exception) {
+                        tempRaw.copyTo(previewFile, overwrite = true)
+                    }
+                } else {
+                    tempRaw.copyTo(previewFile, overwrite = true)
+                }
+
+                try {
+                    tempRaw.delete()
+                } catch (_: Exception) {}
+
+                val resolvedTitle = title.ifBlank { info.name ?: "Şarkı Önizleme" }
+                val resolvedUploader = uploader.ifBlank { info.uploaderName ?: "YouTube" }
+                val resolvedThumb = thumbnail.ifBlank {
+                    info.thumbnails.maxByOrNull { it.height }?.url
+                        ?: info.thumbnails.lastOrNull()?.url
+                        ?: ""
+                }
+
+                val previewTrack = PlaylistTrack(
+                    id = "preview_$url",
+                    title = "[Önizleme] $resolvedTitle",
+                    uploader = resolvedUploader,
+                    filePath = previewFile.absolutePath,
+                    filename = previewFile.name,
+                    thumbnail = resolvedThumb
+                )
+
+                MusicPlayerService.startPlayback(reactContext, listOf(previewTrack), 0)
+                promise.resolve(true)
+            } catch (e: Exception) {
+                try {
+                    tempRaw?.delete()
+                } catch (_: Exception) {}
+                Log.e(TAG, "previewAudio hatası", e)
+                promise.reject("PREVIEW_ERROR", e.localizedMessage ?: "Şarkı önizlemesi başlatılamadı", e)
+            }
+        }
+    }
+
     @ReactMethod
     fun togglePlayPause(promise: Promise) {
         try {

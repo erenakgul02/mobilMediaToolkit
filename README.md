@@ -15,6 +15,8 @@ Bağlantıya tıkladığınızda en güncel `.apk` kurulum dosyası doğrudan ci
 ## Temel Özellikler
 
 - **Dahili YouTube Arama Motoru:** Uygulamadan çıkmadan şarkı, sanatçı veya video adı aratarak sonuçları doğrudan listeleyebilir ya da bağlantı yapıştırarak analiz edebilirsiniz.
+- **Otomatik İndirme Formatı (Tek Tıkla İndir):** Üst barda bulunan kalıcı format seçici (varsayılan: M4A Yüksek Kalite) sayesinde her seferinde format ve kalite seçmekle uğraşmadan arama sonuçlarından veya bağlantıdan tek dokunuşla indirme başlatabilirsiniz.
+- **İndirmeden Önce Şarkı Dinleme (Önizleme):** Doğru şarkıyı veya versiyonu indirdiğinizden emin olmak için arama sonuçlarındaki veya analiz ekranındaki dinleme butonuna basarak medyayı telefonunuza kaydetmeden önce dinleyip kontrol edebilirsiniz.
 - **Yüksek Kaliteli Ses ve Video İndirme:** Şarkıları yüksek kaliteli M4A (AAC) formatında, videoları ise 1080p Full HD ve 720p HD MP4 formatında cihazınızın `Download/MediaToolkit` klasörüne kaydeder.
 - **Sıralı İndirme Kuyruğu (Bekleyen İndirmeler):** Bir medya indirilirken yeni şarkı veya videoları indirme sırasına ekleyebilirsiniz. Aktif indirme tamamlandığında sıradaki dosyalar otomatik olarak indirilir.
 - **Arka Plan Müzik Çalar ve Medya Bildirimi:** İndirilen şarkıları ekran kapalıyken veya başka uygulamalardayken arka planda kesintisiz çalar. Bildirim çubuğu ve kilit ekranı üzerinden şarkı değiştirme, duraklatma ve kapatma kontrolleri sunar.

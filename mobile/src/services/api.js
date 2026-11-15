@@ -6,6 +6,64 @@ import * as Sharing from 'expo-sharing';
 const LOCAL_HISTORY_KEY = '@mobil_media_toolkit_local_downloads';
 const PLAYLISTS_STORAGE_KEY = '@mobil_media_toolkit_playlists';
 const THEME_STORAGE_KEY = '@mobil_media_toolkit_theme';
+const DEFAULT_PRESET_STORAGE_KEY = '@mobil_media_toolkit_default_preset';
+
+export const DOWNLOAD_PRESETS = [
+  {
+    id: 'm4a_high',
+    type: 'm4a',
+    quality: 'high',
+    shortLabel: 'M4A Yüksek',
+    fullLabel: 'M4A Yüksek Kalite (Ses)',
+    icon: 'musical-notes',
+  },
+  {
+    id: 'm4a_128',
+    type: 'm4a',
+    quality: '128',
+    shortLabel: 'M4A Standart',
+    fullLabel: 'M4A Standart (Ses)',
+    icon: 'musical-note-outline',
+  },
+  {
+    id: 'mp4_1080p',
+    type: 'mp4',
+    quality: '1080p',
+    shortLabel: 'MP4 1080p HD',
+    fullLabel: 'MP4 1080p Full HD (Video)',
+    icon: 'videocam',
+  },
+  {
+    id: 'mp4_720p',
+    type: 'mp4',
+    quality: '720p',
+    shortLabel: 'MP4 720p HD',
+    fullLabel: 'MP4 720p HD (Video)',
+    icon: 'videocam-outline',
+  },
+];
+
+export async function getDefaultDownloadPreset() {
+  try {
+    const savedId = await AsyncStorage.getItem(DEFAULT_PRESET_STORAGE_KEY);
+    if (savedId) {
+      const found = DOWNLOAD_PRESETS.find((p) => p.id === savedId);
+      if (found) return found;
+    }
+  } catch (e) {
+    console.warn('Varsayılan indirme tercihi okunamadı:', e);
+  }
+  return DOWNLOAD_PRESETS[0]; // Varsayılan: M4A Yüksek Kalite
+}
+
+export async function setDefaultDownloadPreset(presetId) {
+  try {
+    await AsyncStorage.setItem(DEFAULT_PRESET_STORAGE_KEY, presetId);
+  } catch (e) {
+    console.warn('Varsayılan indirme tercihi kaydedilemedi:', e);
+  }
+  return DOWNLOAD_PRESETS.find((p) => p.id === presetId) || DOWNLOAD_PRESETS[0];
+}
 
 const YoutubeDLNative = NativeModules.YoutubeDLNative;
 
@@ -582,6 +640,23 @@ export async function playAudioPlaylist(tracks, startIndex = 0) {
     return await YoutubeDLNative.playPlaylist(tracks, startIndex);
   }
   throw new Error('Arka plan müzik oynatıcı yalnızca Android APK üzerinde desteklenir.');
+}
+
+export async function previewYouTubeAudio({ url, title, uploader, thumbnail }) {
+  const cleanUrl = normalizeUrl(url);
+  if (!cleanUrl) {
+    throw new Error('Önizlenecek medya bağlantısı bulunamadı.');
+  }
+  if (Platform.OS === 'android' && YoutubeDLNative && YoutubeDLNative.previewAudio) {
+    await requestNotificationPermissionIfNeeded();
+    return await YoutubeDLNative.previewAudio(
+      cleanUrl,
+      title || 'Şarkı Önizleme',
+      uploader || 'YouTube',
+      thumbnail || ''
+    );
+  }
+  throw new Error('Şarkı önizleme özelliği yalnızca güncel Android APK üzerinde desteklenir.');
 }
 
 export async function togglePlayPauseAudio() {
