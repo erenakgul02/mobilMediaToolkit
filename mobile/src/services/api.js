@@ -1,4 +1,4 @@
-import { Platform, NativeModules, DeviceEventEmitter } from 'react-native';
+import { Platform, NativeModules, DeviceEventEmitter, PermissionsAndroid } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
@@ -160,7 +160,7 @@ export async function fetchVideoInfo(url) {
   throw new Error('Video bilgileri alınamadı. Lütfen geçerli bir YouTube video linki yapıştırın.');
 }
 
-export async function startDownload({ url, type, quality, title, thumbnail }) {
+export async function startDownload({ url, type, quality, title, thumbnail, uploader }) {
   const cleanUrl = normalizeUrl(url);
   const isAudio = type === 'm4a' || type === 'mp3';
   const ext = isAudio ? 'm4a' : 'mp4';
@@ -177,6 +177,7 @@ export async function startDownload({ url, type, quality, title, thumbnail }) {
       speed: 'Başlatılıyor...',
       eta: '',
       title: title || 'YouTube Medya',
+      uploader: uploader || 'YouTube',
       thumbnail: thumbnail || '',
       type: isAudio ? 'm4a' : 'mp4',
       quality: quality,
@@ -205,6 +206,7 @@ export async function startDownload({ url, type, quality, title, thumbnail }) {
           id: taskId,
           filename: actualFilename,
           title: title || 'YouTube Medya',
+          uploader: uploader || 'YouTube',
           thumbnail: thumbnail || '',
           type: isAudio ? 'm4a' : 'mp4',
           quality: quality,
@@ -242,22 +244,117 @@ export async function deleteHistoryItem(filename) {
   return { success: true };
 }
 
-export async function downloadFileToDevice(fileUrlOrPath, filename) {
+export async function downloadFileToDevice(fileUrlOrPath, filename, actionType = 'open') {
+  // 1. Önce yerel Android FileProvider köprüsünü kullan (Scoped Storage & M4A MIME hatasını önler)
+  if (Platform.OS === 'android' && YoutubeDLNative && YoutubeDLNative.openOrShareFile) {
+    try {
+      await YoutubeDLNative.openOrShareFile(fileUrlOrPath || '', filename || '', actionType);
+      return { success: true, uri: fileUrlOrPath };
+    } catch (nativeErr) {
+      console.warn('Native openOrShareFile uyarısı, Sharing deneniyor:', nativeErr);
+      // Eğer open başarısız olduysa share ile tekrar dene
+      if (actionType === 'open') {
+        try {
+          await YoutubeDLNative.openOrShareFile(fileUrlOrPath || '', filename || '', 'share');
+          return { success: true, uri: fileUrlOrPath };
+        } catch (shareErr) {
+          console.warn('Native share uyarısı:', shareErr);
+        }
+      }
+    }
+  }
+
+  const lower = (filename || fileUrlOrPath || '').toLowerCase();
+  const mimeType = lower.endsWith('.m4a')
+    ? 'audio/mp4'
+    : lower.endsWith('.mp3')
+    ? 'audio/mpeg'
+    : 'video/mp4';
+
   if (fileUrlOrPath && fileUrlOrPath.startsWith('file://')) {
     if (await Sharing.isAvailableAsync()) {
-      await Sharing.shareAsync(fileUrlOrPath);
+      await Sharing.shareAsync(fileUrlOrPath, { mimeType, dialogTitle: filename || 'Medya Paylaş' });
     }
     return { success: true, uri: fileUrlOrPath };
   }
 
-  try {
-    const cleanFilename = (filename || 'media').replace(/[\\/:*?"<>|]/g, '_').trim();
-    const fileUri = `${FileSystem.documentDirectory}${cleanFilename}`;
-    if (await Sharing.isAvailableAsync()) {
-      await Sharing.shareAsync(fileUri);
-    }
-    return { success: true, uri: fileUri };
-  } catch (err) {
-    throw err;
+  const cleanFilename = (filename || 'media').replace(/[\\/:*?"<>|]/g, '_').trim();
+  const fileUri = `${FileSystem.documentDirectory}${cleanFilename}`;
+  if (await Sharing.isAvailableAsync()) {
+    await Sharing.shareAsync(fileUri, { mimeType, dialogTitle: filename || 'Medya Paylaş' });
   }
+  return { success: true, uri: fileUri };
+}
+
+// ==========================================
+// ARKA PLAN MÜZİK OYNATICI (FOREGROUND SERVICE)
+// ==========================================
+
+export async function requestNotificationPermissionIfNeeded() {
+  if (Platform.OS === 'android' && Platform.Version >= 33) {
+    try {
+      const granted = await PermissionsAndroid.check(
+        PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS
+      );
+      if (!granted) {
+        await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS,
+          {
+            title: 'Medya Bildirimi İzni',
+            message:
+              'Şarkıları arka planda dinlerken bildirim çubuğundan durdurup değiştirebilmek için bildirim izni verin.',
+            buttonPositive: 'İzin Ver',
+            buttonNegative: 'Daha Sonra',
+          }
+        );
+      }
+    } catch (e) {
+      console.warn('Bildirim izni kontrol hatası:', e);
+    }
+  }
+}
+
+export async function playAudioPlaylist(tracks, startIndex = 0) {
+  if (Platform.OS === 'android' && YoutubeDLNative && YoutubeDLNative.playPlaylist) {
+    await requestNotificationPermissionIfNeeded();
+    return await YoutubeDLNative.playPlaylist(tracks, startIndex);
+  }
+  throw new Error('Arka plan müzik oynatıcı yalnızca Android APK üzerinde desteklenir.');
+}
+
+export async function togglePlayPauseAudio() {
+  if (Platform.OS === 'android' && YoutubeDLNative && YoutubeDLNative.togglePlayPause) {
+    return await YoutubeDLNative.togglePlayPause();
+  }
+}
+
+export async function nextAudioTrack() {
+  if (Platform.OS === 'android' && YoutubeDLNative && YoutubeDLNative.nextTrack) {
+    return await YoutubeDLNative.nextTrack();
+  }
+}
+
+export async function prevAudioTrack() {
+  if (Platform.OS === 'android' && YoutubeDLNative && YoutubeDLNative.previousTrack) {
+    return await YoutubeDLNative.previousTrack();
+  }
+}
+
+export async function stopAudioPlayer() {
+  if (Platform.OS === 'android' && YoutubeDLNative && YoutubeDLNative.stopPlayer) {
+    return await YoutubeDLNative.stopPlayer();
+  }
+}
+
+export async function seekAudioTo(positionMs) {
+  if (Platform.OS === 'android' && YoutubeDLNative && YoutubeDLNative.seekTo) {
+    return await YoutubeDLNative.seekTo(Math.max(0, Math.round(positionMs)));
+  }
+}
+
+export async function getAudioPlayerState() {
+  if (Platform.OS === 'android' && YoutubeDLNative && YoutubeDLNative.getPlayerState) {
+    return await YoutubeDLNative.getPlayerState();
+  }
+  return { isActive: false, isPlaying: false };
 }

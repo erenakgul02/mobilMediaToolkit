@@ -1,17 +1,21 @@
 package com.alierenakgul.mobilmediatoolkit.nativemodules
 
+import android.content.Intent
 import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat as AndroidMediaFormat
 import android.media.MediaMuxer
 import android.media.MediaScannerConnection
+import android.net.Uri
 import android.os.Environment
 import android.util.Log
+import androidx.core.content.FileProvider
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
+import com.facebook.react.bridge.ReadableArray
 import com.facebook.react.modules.core.DeviceEventManagerModule
 import org.schabi.newpipe.extractor.MediaFormat
 import org.schabi.newpipe.extractor.NewPipe
@@ -140,6 +144,10 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
     @Volatile
     private var isInitialized = false
 
+    init {
+        MusicPlayerService.reactContextRef = reactContext
+    }
+
     override fun getName(): String = "YoutubeDLNative"
 
     @Synchronized
@@ -164,6 +172,7 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
     fun initEngine(promise: Promise) {
         executor.execute {
             try {
+                MusicPlayerService.reactContextRef = reactContext
                 ensureInit()
                 promise.resolve(true)
             } catch (e: Exception) {
@@ -176,6 +185,187 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
     @ReactMethod
     fun updateEngine(promise: Promise) {
         promise.resolve("UP_TO_DATE")
+    }
+
+    @ReactMethod
+    fun addListener(eventName: String) {
+        // React Native NativeEventEmitter uyumluluğu için
+    }
+
+    @ReactMethod
+    fun removeListeners(count: Int) {
+        // React Native NativeEventEmitter uyumluluğu için
+    }
+
+    private fun resolveExistingFile(filePathOrUrl: String?, filename: String?): File? {
+        if (!filePathOrUrl.isNullOrBlank()) {
+            val clean = filePathOrUrl.removePrefix("file://")
+            val direct = File(clean)
+            if (direct.exists()) return direct
+        }
+        if (!filename.isNullOrBlank()) {
+            val inStorage = File(getStorageDir(), filename)
+            if (inStorage.exists()) return inStorage
+            val inPublicDownloads = File(
+                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+                "MediaToolkit/$filename"
+            )
+            if (inPublicDownloads.exists()) return inPublicDownloads
+        }
+        return null
+    }
+
+    private fun getMimeTypeForFile(file: File): String {
+        val ext = file.extension.lowercase()
+        return when (ext) {
+            "m4a", "mp4a", "aac" -> "audio/mp4"
+            "mp3" -> "audio/mpeg"
+            "webm", "ogg", "opus" -> "audio/*"
+            "mp4", "m4v" -> "video/mp4"
+            else -> "*/*"
+        }
+    }
+
+    @ReactMethod
+    fun openOrShareFile(filePathOrUrl: String, filename: String, actionType: String, promise: Promise) {
+        executor.execute {
+            try {
+                val targetFile = resolveExistingFile(filePathOrUrl, filename)
+                    ?: throw IOException("Dosya cihazda bulunamadı: $filename")
+
+                val mimeType = getMimeTypeForFile(targetFile)
+                val uri: Uri = FileProvider.getUriForFile(
+                    reactContext,
+                    "${reactContext.packageName}.SharingFileProvider",
+                    targetFile
+                )
+
+                val intent = if (actionType == "open") {
+                    Intent(Intent.ACTION_VIEW).apply {
+                        setDataAndType(uri, mimeType)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                } else {
+                    Intent(Intent.ACTION_SEND).apply {
+                        type = mimeType
+                        putExtra(Intent.EXTRA_STREAM, uri)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                }
+
+                val chooserTitle = if (actionType == "open") "Medya Oynatıcı Seçin" else "Dosyayı Paylaş"
+                val chooser = Intent.createChooser(intent, chooserTitle).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+
+                val currentActivity = reactContext.currentActivity
+                if (currentActivity != null) {
+                    currentActivity.startActivity(chooser)
+                } else {
+                    reactContext.startActivity(chooser)
+                }
+                promise.resolve(true)
+            } catch (e: Exception) {
+                Log.e(TAG, "openOrShareFile hatası", e)
+                promise.reject("FILE_OPEN_ERROR", e.localizedMessage ?: "Dosya açılamadı", e)
+            }
+        }
+    }
+
+    // --- ARKA PLAN MÜZİK ÇALAR METOTLARI ---
+
+    @ReactMethod
+    fun playPlaylist(tracksArray: ReadableArray, startIndex: Int, promise: Promise) {
+        try {
+            MusicPlayerService.reactContextRef = reactContext
+            val list = mutableListOf<PlaylistTrack>()
+            for (i in 0 until tracksArray.size()) {
+                val map = tracksArray.getMap(i) ?: continue
+                val rawUrl = map.getString("download_url") ?: map.getString("filePath") ?: ""
+                val fname = map.getString("filename") ?: ""
+                val resolvedFile = resolveExistingFile(rawUrl, fname) ?: continue
+
+                list.add(
+                    PlaylistTrack(
+                        id = map.getString("id") ?: fname,
+                        title = map.getString("title") ?: fname,
+                        uploader = map.getString("uploader") ?: map.getString("channel") ?: "MediaToolkit",
+                        filePath = resolvedFile.absolutePath,
+                        filename = fname
+                    )
+                )
+            }
+
+            if (list.isEmpty()) {
+                promise.reject("EMPTY_PLAYLIST", "Oynatılacak ses dosyası cihazda bulunamadı.")
+                return
+            }
+
+            MusicPlayerService.startPlayback(reactContext, list, startIndex)
+            promise.resolve(true)
+        } catch (e: Exception) {
+            Log.e(TAG, "playPlaylist hatası", e)
+            promise.reject("PLAYER_ERROR", e.localizedMessage ?: "Müzik çalar başlatılamadı", e)
+        }
+    }
+
+    @ReactMethod
+    fun togglePlayPause(promise: Promise) {
+        try {
+            MusicPlayerService.sendCommand(reactContext, MusicPlayerService.ACTION_PLAY_PAUSE)
+            promise.resolve(true)
+        } catch (e: Exception) {
+            promise.reject("PLAYER_ERROR", e.localizedMessage, e)
+        }
+    }
+
+    @ReactMethod
+    fun nextTrack(promise: Promise) {
+        try {
+            MusicPlayerService.sendCommand(reactContext, MusicPlayerService.ACTION_NEXT)
+            promise.resolve(true)
+        } catch (e: Exception) {
+            promise.reject("PLAYER_ERROR", e.localizedMessage, e)
+        }
+    }
+
+    @ReactMethod
+    fun previousTrack(promise: Promise) {
+        try {
+            MusicPlayerService.sendCommand(reactContext, MusicPlayerService.ACTION_PREV)
+            promise.resolve(true)
+        } catch (e: Exception) {
+            promise.reject("PLAYER_ERROR", e.localizedMessage, e)
+        }
+    }
+
+    @ReactMethod
+    fun stopPlayer(promise: Promise) {
+        try {
+            MusicPlayerService.sendCommand(reactContext, MusicPlayerService.ACTION_STOP)
+            promise.resolve(true)
+        } catch (e: Exception) {
+            promise.reject("PLAYER_ERROR", e.localizedMessage, e)
+        }
+    }
+
+    @ReactMethod
+    fun seekTo(positionMs: Double, promise: Promise) {
+        try {
+            MusicPlayerService.seekToPosition(positionMs.toInt())
+            promise.resolve(true)
+        } catch (e: Exception) {
+            promise.reject("PLAYER_ERROR", e.localizedMessage, e)
+        }
+    }
+
+    @ReactMethod
+    fun getPlayerState(promise: Promise) {
+        try {
+            promise.resolve(MusicPlayerService.getCurrentStateMap())
+        } catch (e: Exception) {
+            promise.reject("PLAYER_ERROR", e.localizedMessage, e)
+        }
     }
 
     private fun getStorageDir(): File {
@@ -686,10 +876,11 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
 
                 // Galeri ve Müzik çalarların dosyayı anında görmesi için MediaScanner'a bildir
                 try {
+                    val mime = getMimeTypeForFile(finalFile)
                     MediaScannerConnection.scanFile(
                         reactContext.applicationContext,
                         arrayOf(finalFile.absolutePath),
-                        null,
+                        arrayOf(mime),
                         null
                     )
                 } catch (_: Exception) {}

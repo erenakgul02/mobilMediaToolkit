@@ -132,6 +132,7 @@ export default function DownloaderTab({ onSwitchToHistory }) {
         quality: selectedQuality,
         title: videoInfo?.title || 'Video',
         thumbnail: videoInfo?.thumbnail || '',
+        uploader: videoInfo?.channel || videoInfo?.author || 'YouTube',
       });
 
       const taskId = res.taskId;

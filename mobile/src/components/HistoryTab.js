@@ -14,12 +14,27 @@ import {
   getLocalHistory,
   deleteLocalHistoryItem,
   downloadFileToDevice,
+  playAudioPlaylist,
+  togglePlayPauseAudio,
 } from '../services/api';
 
-export default function HistoryTab({ onSwitchToDownloader }) {
+function isItemAudio(item) {
+  const fname = (item?.filename || '').toLowerCase();
+  return (
+    item?.type === 'm4a' ||
+    item?.type === 'mp3' ||
+    fname.endsWith('.m4a') ||
+    fname.endsWith('.mp3') ||
+    fname.endsWith('.aac') ||
+    fname.endsWith('.ogg')
+  );
+}
+
+export default function HistoryTab({ onSwitchToDownloader, playerState }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState(null);
+  const [filterType, setFilterType] = useState('all'); // 'all' | 'audio' | 'video'
 
   const loadHistory = async () => {
     setLoading(true);
@@ -37,12 +52,65 @@ export default function HistoryTab({ onSwitchToDownloader }) {
     loadHistory();
   }, []);
 
-  const handleDownload = async (item) => {
-    setActionLoading(item.filename);
+  const audioItems = items.filter(isItemAudio);
+  const videoItems = items.filter((i) => !isItemAudio(i));
+
+  const filteredItems =
+    filterType === 'audio'
+      ? audioItems
+      : filterType === 'video'
+      ? videoItems
+      : items;
+
+  const handlePlaySong = async (targetItem) => {
+    if (audioItems.length === 0) return;
+
+    const isCurrentlyLoaded =
+      playerState?.isActive &&
+      ((targetItem.id && playerState.id === targetItem.id) ||
+        (targetItem.filename && playerState.filename === targetItem.filename));
+
+    if (isCurrentlyLoaded) {
+      try {
+        await togglePlayPauseAudio();
+      } catch (e) {
+        Alert.alert('Hata', 'Oynatıcı durumu değiştirilemedi: ' + e.message);
+      }
+      return;
+    }
+
+    const startIndex = Math.max(
+      0,
+      audioItems.findIndex(
+        (a) =>
+          (targetItem.id && a.id === targetItem.id) ||
+          a.filename === targetItem.filename
+      )
+    );
+
     try {
-      await downloadFileToDevice(item.download_url, item.filename);
+      await playAudioPlaylist(audioItems, startIndex);
     } catch (e) {
-      Alert.alert('Hata', 'Dosya açılamadı: ' + e.message);
+      Alert.alert('Oynatma Hatası', e.message || 'Şarkı başlatılamadı.');
+    }
+  };
+
+  const handlePlayAllSongs = async () => {
+    if (audioItems.length === 0) return;
+    try {
+      await playAudioPlaylist(audioItems, 0);
+    } catch (e) {
+      Alert.alert('Oynatma Hatası', e.message || 'Şarkı listesi başlatılamadı.');
+    }
+  };
+
+  const handleOpenOrShare = async (item, actionType = 'open') => {
+    const key = `${item.filename}_${actionType}`;
+    setActionLoading(key);
+    try {
+      await downloadFileToDevice(item.download_url, item.filename, actionType);
+    } catch (e) {
+      Alert.alert('Hata', 'Dosya işlemi başarısız: ' + e.message);
     } finally {
       setActionLoading(null);
     }
@@ -76,63 +144,142 @@ export default function HistoryTab({ onSwitchToDownloader }) {
 
   const renderItem = ({ item }) => {
     const fname = item.filename || '';
-    const isAudio =
-      item.type === 'm4a' ||
-      item.type === 'mp3' ||
-      fname.endsWith('.m4a') ||
-      fname.endsWith('.mp3') ||
-      fname.endsWith('.webm');
-    const badgeLabel = fname.endsWith('.mp3') ? 'MP3' : isAudio ? 'M4A' : 'MP4';
-    const isCurrentAction = actionLoading === item.filename;
+    const isAudio = isItemAudio(item);
+    const badgeLabel = fname.toLowerCase().endsWith('.mp3')
+      ? 'MP3'
+      : isAudio
+      ? 'M4A'
+      : 'MP4';
+
+    const isOpenLoading = actionLoading === `${item.filename}_open`;
+    const isShareLoading = actionLoading === `${item.filename}_share`;
+
+    const isCurrentTrack =
+      isAudio &&
+      playerState?.isActive &&
+      ((item.id && playerState.id === item.id) ||
+        (item.filename && playerState.filename === item.filename));
+    const isCurrentTrackPlaying = isCurrentTrack && playerState?.isPlaying;
 
     return (
-      <View style={styles.historyCard}>
+      <View
+        style={[
+          styles.historyCard,
+          isCurrentTrack && styles.historyCardPlaying,
+        ]}
+      >
         <View style={styles.cardHeader}>
-          <View
-            style={[
-              styles.typeBadge,
-              { backgroundColor: isAudio ? '#4F46E5' : '#0284C7' },
-            ]}
-          >
-            <Ionicons
-              name={isAudio ? 'musical-notes' : 'videocam'}
-              size={12}
-              color="#FFFFFF"
-            />
-            <Text style={styles.typeBadgeText}>{badgeLabel}</Text>
+          <View style={styles.badgeRow}>
+            <View
+              style={[
+                styles.typeBadge,
+                { backgroundColor: isAudio ? '#4F46E5' : '#0284C7' },
+              ]}
+            >
+              <Ionicons
+                name={isAudio ? 'musical-notes' : 'videocam'}
+                size={12}
+                color="#FFFFFF"
+              />
+              <Text style={styles.typeBadgeText}>{badgeLabel}</Text>
+            </View>
+
+            {isCurrentTrack && (
+              <View style={styles.nowPlayingBadge}>
+                <Ionicons
+                  name={isCurrentTrackPlaying ? 'volume-high' : 'pause'}
+                  size={12}
+                  color="#4F46E5"
+                />
+                <Text style={styles.nowPlayingBadgeText}>
+                  {isCurrentTrackPlaying ? 'Şu An Çalıyor' : 'Duraklatıldı'}
+                </Text>
+              </View>
+            )}
           </View>
 
           <Text style={styles.dateText}>{item.date || 'Bugün'}</Text>
         </View>
 
-        <Text style={styles.titleText} numberOfLines={2}>
-          {item.title || item.filename}
-        </Text>
+        <TouchableOpacity
+          activeOpacity={isAudio ? 0.7 : 1}
+          onPress={() => {
+            if (isAudio) handlePlaySong(item);
+          }}
+        >
+          <Text style={styles.titleText} numberOfLines={2}>
+            {item.title || item.filename}
+          </Text>
+        </TouchableOpacity>
 
         <View style={styles.metaRow}>
+          {item.uploader ? (
+            <Text style={styles.uploaderText} numberOfLines={1}>
+              {item.uploader}
+            </Text>
+          ) : null}
           {item.filesize ? (
             <Text style={styles.sizeText}>{item.filesize}</Text>
           ) : null}
           {item.quality ? (
             <Text style={styles.qualityText}>
-              Kalite: {item.quality === 'high' ? 'Yüksek (AAC)' : item.quality}
+              {item.quality === 'high' ? 'Yüksek (AAC)' : item.quality}
             </Text>
           ) : null}
         </View>
 
         {/* Aksiyon butonları */}
         <View style={styles.actionsRow}>
+          {isAudio ? (
+            <TouchableOpacity
+              style={[
+                styles.playAudioBtn,
+                isCurrentTrackPlaying && styles.playAudioBtnActive,
+              ]}
+              onPress={() => handlePlaySong(item)}
+            >
+              <Ionicons
+                name={isCurrentTrackPlaying ? 'pause-circle' : 'play-circle'}
+                size={19}
+                color="#FFFFFF"
+              />
+              <Text style={styles.playAudioBtnText}>
+                {isCurrentTrack
+                  ? isCurrentTrackPlaying
+                    ? 'Duraklat'
+                    : 'Devam Et'
+                  : 'Arka Planda Dinle'}
+              </Text>
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity
+              style={styles.downloadBtn}
+              onPress={() => handleOpenOrShare(item, 'open')}
+              disabled={isOpenLoading}
+            >
+              {isOpenLoading ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <>
+                  <Ionicons name="play-outline" size={17} color="#FFFFFF" />
+                  <Text style={styles.downloadBtnText}>Videoyu Aç</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          )}
+
+          {/* Paylaş Butonu */}
           <TouchableOpacity
-            style={styles.downloadBtn}
-            onPress={() => handleDownload(item)}
-            disabled={isCurrentAction}
+            style={styles.secondaryActionBtn}
+            onPress={() => handleOpenOrShare(item, 'share')}
+            disabled={isShareLoading}
           >
-            {isCurrentAction ? (
-              <ActivityIndicator size="small" color="#FFFFFF" />
+            {isShareLoading ? (
+              <ActivityIndicator size="small" color="#2563EB" />
             ) : (
               <>
-                <Ionicons name="share-outline" size={16} color="#FFFFFF" />
-                <Text style={styles.downloadBtnText}>Paylaş / Aç</Text>
+                <Ionicons name="share-social-outline" size={16} color="#2563EB" />
+                <Text style={styles.secondaryActionText}>Paylaş</Text>
               </>
             )}
           </TouchableOpacity>
@@ -160,9 +307,9 @@ export default function HistoryTab({ onSwitchToDownloader }) {
             <Ionicons name="arrow-back" size={16} color="#2563EB" />
             <Text style={styles.backBtnText}>İndiriciye Dön</Text>
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>İndirilenler & Geçmiş</Text>
+          <Text style={styles.headerTitle}>İndirilenler & Müzik Çalar</Text>
           <Text style={styles.headerSubtitle}>
-            {items.length} adet medya dosyası hazır
+            {audioItems.length} şarkı • {videoItems.length} video hazır
           </Text>
         </View>
 
@@ -179,36 +326,128 @@ export default function HistoryTab({ onSwitchToDownloader }) {
         </TouchableOpacity>
       </View>
 
-      {/* Hızlı Yeni İndirme Butonu */}
+      {/* Filtre Sekmeleri: Tümü | Şarkılar | Videolar */}
       {items.length > 0 && (
+        <View style={styles.filterRow}>
+          <TouchableOpacity
+            style={[
+              styles.filterChip,
+              filterType === 'all' && styles.filterChipActive,
+            ]}
+            onPress={() => setFilterType('all')}
+          >
+            <Text
+              style={[
+                styles.filterChipText,
+                filterType === 'all' && styles.filterChipTextActive,
+              ]}
+            >
+              Tümü ({items.length})
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[
+              styles.filterChip,
+              filterType === 'audio' && styles.filterChipActiveAudio,
+            ]}
+            onPress={() => setFilterType('audio')}
+          >
+            <Ionicons
+              name="musical-notes"
+              size={14}
+              color={filterType === 'audio' ? '#FFFFFF' : '#4F46E5'}
+            />
+            <Text
+              style={[
+                styles.filterChipText,
+                filterType === 'audio' && styles.filterChipTextActive,
+              ]}
+            >
+              Şarkılar ({audioItems.length})
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[
+              styles.filterChip,
+              filterType === 'video' && styles.filterChipActive,
+            ]}
+            onPress={() => setFilterType('video')}
+          >
+            <Ionicons
+              name="videocam"
+              size={14}
+              color={filterType === 'video' ? '#FFFFFF' : '#0284C7'}
+            />
+            <Text
+              style={[
+                styles.filterChipText,
+                filterType === 'video' && styles.filterChipTextActive,
+              ]}
+            >
+              Videolar ({videoItems.length})
+            </Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* Tüm Şarkıları Arka Planda Çal Butonu */}
+      {audioItems.length > 0 && filterType !== 'video' && (
         <TouchableOpacity
-          style={styles.newDownloadPill}
-          onPress={onSwitchToDownloader}
+          style={styles.playAllBanner}
+          onPress={handlePlayAllSongs}
         >
-          <Ionicons name="add-circle" size={18} color="#2563EB" />
-          <Text style={styles.newDownloadPillText}>+ Yeni Video / Ses İndir</Text>
+          <View style={styles.playAllLeft}>
+            <View style={styles.playAllIconBox}>
+              <Ionicons name="headset" size={18} color="#FFFFFF" />
+            </View>
+            <View>
+              <Text style={styles.playAllTitle}>
+                Tüm Şarkıları Arka Planda Çal ({audioItems.length})
+              </Text>
+              <Text style={styles.playAllSub}>
+                Ekran kapansa bile çalmaya devam eder • Bildirimden kontrol
+              </Text>
+            </View>
+          </View>
+          <Ionicons name="play" size={18} color="#4F46E5" />
         </TouchableOpacity>
       )}
 
       {/* Liste veya Boş Durum */}
-      {items.length === 0 ? (
+      {filteredItems.length === 0 ? (
         <View style={styles.emptyContainer}>
-          <Ionicons name="cloud-download-outline" size={56} color="#CBD5E1" />
-          <Text style={styles.emptyTitle}>Henüz indirme yok</Text>
+          <Ionicons
+            name={
+              filterType === 'audio'
+                ? 'musical-notes-outline'
+                : 'cloud-download-outline'
+            }
+            size={56}
+            color="#CBD5E1"
+          />
+          <Text style={styles.emptyTitle}>
+            {filterType === 'audio'
+              ? 'Henüz indirilmiş şarkı (M4A) yok'
+              : filterType === 'video'
+              ? 'Henüz indirilmiş video (MP4) yok'
+              : 'Henüz indirme yok'}
+          </Text>
           <Text style={styles.emptyText}>
-            YouTube'dan bir link yapıştırıp M4A (Ses) veya MP4 (Video) olarak indirdiğinizde burada listelenecektir.
+            YouTube'dan bir link yapıştırıp M4A (Ses) olarak indirdiğinizde burada arka planda kesintisiz dinleyebilirsiniz.
           </Text>
           <TouchableOpacity
             style={styles.goToDownloadBtn}
             onPress={onSwitchToDownloader}
           >
             <Ionicons name="add" size={18} color="#FFFFFF" />
-            <Text style={styles.goToDownloadText}>İlk Videoyu İndir</Text>
+            <Text style={styles.goToDownloadText}>Yeni Şarkı / Video İndir</Text>
           </TouchableOpacity>
         </View>
       ) : (
         <FlatList
-          data={items}
+          data={filteredItems}
           keyExtractor={(i) => i.id || i.filename}
           renderItem={renderItem}
           contentContainerStyle={styles.listContent}
@@ -223,7 +462,8 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#F8FAFC',
-    padding: 16,
+    paddingHorizontal: 16,
+    paddingTop: 14,
   },
   header: {
     flexDirection: 'row',
@@ -238,7 +478,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    marginBottom: 8,
+    marginBottom: 6,
     alignSelf: 'flex-start',
     backgroundColor: '#F1F5F9',
     paddingHorizontal: 10,
@@ -250,23 +490,6 @@ const styles = StyleSheet.create({
   backBtnText: {
     color: '#2563EB',
     fontSize: 12,
-    fontWeight: '700',
-  },
-  newDownloadPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    backgroundColor: '#EFF6FF',
-    borderWidth: 1,
-    borderColor: '#BFDBFE',
-    paddingVertical: 10,
-    borderRadius: 10,
-    marginBottom: 14,
-  },
-  newDownloadPillText: {
-    color: '#2563EB',
-    fontSize: 13,
     fontWeight: '700',
   },
   headerTitle: {
@@ -289,8 +512,77 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E2E8F0',
   },
+  filterRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 12,
+  },
+  filterChip: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    paddingVertical: 8,
+    borderRadius: 10,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  filterChipActive: {
+    backgroundColor: '#2563EB',
+    borderColor: '#2563EB',
+  },
+  filterChipActiveAudio: {
+    backgroundColor: '#4F46E5',
+    borderColor: '#4F46E5',
+  },
+  filterChipText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  filterChipTextActive: {
+    color: '#FFFFFF',
+  },
+  playAllBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#EEF2FF',
+    borderWidth: 1,
+    borderColor: '#C7D2FE',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 12,
+    marginBottom: 12,
+  },
+  playAllLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flex: 1,
+  },
+  playAllIconBox: {
+    width: 34,
+    height: 34,
+    borderRadius: 9,
+    backgroundColor: '#4F46E5',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  playAllTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#312E81',
+  },
+  playAllSub: {
+    fontSize: 11,
+    color: '#4338CA',
+    marginTop: 1,
+  },
   listContent: {
-    paddingBottom: 30,
+    paddingBottom: 24,
     gap: 12,
   },
   historyCard: {
@@ -305,11 +597,21 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     elevation: 2,
   },
+  historyCardPlaying: {
+    borderColor: '#6366F1',
+    borderWidth: 1.5,
+    backgroundColor: '#F5F3FF',
+  },
   cardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 8,
+  },
+  badgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   typeBadge: {
     flexDirection: 'row',
@@ -324,6 +626,20 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '800',
   },
+  nowPlayingBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#E0E7FF',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  nowPlayingBadgeText: {
+    color: '#4338CA',
+    fontSize: 11,
+    fontWeight: '700',
+  },
   dateText: {
     fontSize: 11,
     color: '#94A3B8',
@@ -332,13 +648,21 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
     color: '#0F172A',
-    lineHeight: 18,
-    marginBottom: 8,
+    lineHeight: 19,
+    marginBottom: 6,
   },
   metaRow: {
     flexDirection: 'row',
-    gap: 12,
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 10,
     marginBottom: 12,
+  },
+  uploaderText: {
+    fontSize: 12,
+    color: '#475569',
+    fontWeight: '600',
+    maxWidth: 160,
   },
   sizeText: {
     fontSize: 12,
@@ -353,29 +677,68 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 8,
   },
+  playAudioBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#4F46E5',
+    height: 38,
+    borderRadius: 9,
+    shadowColor: '#4F46E5',
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  playAudioBtnActive: {
+    backgroundColor: '#4338CA',
+  },
+  playAudioBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
+  },
   downloadBtn: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    backgroundColor: '#2563EB',
+    backgroundColor: '#0284C7',
     height: 38,
-    borderRadius: 8,
-    shadowColor: '#2563EB',
-    shadowOpacity: 0.25,
+    borderRadius: 9,
+    shadowColor: '#0284C7',
+    shadowOpacity: 0.2,
     shadowRadius: 4,
     elevation: 2,
   },
   downloadBtnText: {
     color: '#FFFFFF',
     fontSize: 13,
-    fontWeight: '600',
+    fontWeight: '700',
+  },
+  secondaryActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    paddingHorizontal: 12,
+    height: 38,
+    borderRadius: 9,
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+  },
+  secondaryActionText: {
+    color: '#2563EB',
+    fontSize: 12,
+    fontWeight: '700',
   },
   deleteBtn: {
     width: 38,
     height: 38,
-    borderRadius: 8,
+    borderRadius: 9,
     backgroundColor: '#F8FAFC',
     alignItems: 'center',
     justifyContent: 'center',
@@ -393,6 +756,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#0F172A',
     marginTop: 16,
+    textAlign: 'center',
   },
   emptyText: {
     fontSize: 13,

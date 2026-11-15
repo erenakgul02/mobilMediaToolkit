@@ -80,6 +80,21 @@ def setup_native():
         with open(manifest_path, "r", encoding="utf-8") as f:
             manifest = f.read()
 
+        # Add permissions required for background audio playback & media notifications
+        required_perms = [
+            "android.permission.FOREGROUND_SERVICE",
+            "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
+            "android.permission.WAKE_LOCK",
+            "android.permission.POST_NOTIFICATIONS",
+        ]
+        for perm in required_perms:
+            if perm not in manifest:
+                manifest = manifest.replace(
+                    "<application",
+                    f'  <uses-permission android:name="{perm}" />\n  <application',
+                    1
+                )
+
         app_tag_match = re.search(r"<application\b([^>]*)>", manifest)
         if app_tag_match:
             attrs = app_tag_match.group(1)
@@ -90,9 +105,20 @@ def setup_native():
                 new_attrs += ' android:requestLegacyExternalStorage="true"'
 
             manifest = manifest[:app_tag_match.start(1)] + new_attrs + manifest[app_tag_match.end(1):]
-            with open(manifest_path, "w", encoding="utf-8") as f:
-                f.write(manifest)
-            print("Updated AndroidManifest.xml")
+
+        # Register MusicPlayerService for background audio & lockscreen/notification controls
+        service_decl = """    <service
+      android:name=".nativemodules.MusicPlayerService"
+      android:enabled="true"
+      android:exported="false"
+      android:foregroundServiceType="mediaPlayback" />
+  </application>"""
+        if "MusicPlayerService" not in manifest and "</application>" in manifest:
+            manifest = manifest.replace("</application>", service_decl, 1)
+
+        with open(manifest_path, "w", encoding="utf-8") as f:
+            f.write(manifest)
+        print("Updated AndroidManifest.xml (permissions + MusicPlayerService)")
 
     # 5. Update app/proguard-rules.pro
     proguard_path = os.path.join(ANDROID_DIR, "app", "proguard-rules.pro")

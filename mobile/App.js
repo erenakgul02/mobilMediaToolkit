@@ -8,6 +8,7 @@ import {
   Image,
   Platform,
   NativeModules,
+  DeviceEventEmitter,
   StatusBar as RNStatusBar,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
@@ -15,24 +16,78 @@ import { Ionicons } from '@expo/vector-icons';
 
 import DownloaderTab from './src/components/DownloaderTab';
 import HistoryTab from './src/components/HistoryTab';
+import {
+  getAudioPlayerState,
+  togglePlayPauseAudio,
+  nextAudioTrack,
+  prevAudioTrack,
+  stopAudioPlayer,
+} from './src/services/api';
+
+function formatMs(ms) {
+  const totalSec = Math.max(0, Math.floor((Number(ms) || 0) / 1000));
+  const mins = Math.floor(totalSec / 60);
+  const secs = totalSec % 60;
+  return `${mins < 10 ? '0' : ''}${mins}:${secs < 10 ? '0' : ''}${secs}`;
+}
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('downloader');
+  const [playerState, setPlayerState] = useState({
+    isActive: false,
+    isPlaying: false,
+    currentIndex: 0,
+    playlistCount: 0,
+    positionMs: 0,
+    durationMs: 0,
+    id: '',
+    title: '',
+    uploader: '',
+    filename: '',
+  });
 
   useEffect(() => {
-    // Uygulama acildiginda yerel motoru (YoutubeDL ve FFmpeg) arka planda hazirla
+    // Uygulama açıldığında yerel motoru (NewPipeExtractor) hazırla
     if (NativeModules.YoutubeDLNative && NativeModules.YoutubeDLNative.initEngine) {
       NativeModules.YoutubeDLNative.initEngine().catch((err) => {
-        console.warn('Native init uyarisi:', err);
+        console.warn('Native init uyarısı:', err);
       });
     }
+
+    // Arka planda çalan aktif bir şarkı varsa durumunu senkronize et
+    getAudioPlayerState()
+      .then((st) => {
+        if (st && typeof st.isActive === 'boolean') {
+          setPlayerState(st);
+        }
+      })
+      .catch(() => {});
+
+    // Android Foreground Service'ten gelen gerçek zamanlı oynatıcı olaylarını dinle
+    let sub = null;
+    if (Platform.OS === 'android') {
+      sub = DeviceEventEmitter.addListener('onMusicPlayerStateChanged', (event) => {
+        if (event) {
+          setPlayerState(event);
+        }
+      });
+    }
+
+    return () => {
+      if (sub) sub.remove();
+    };
   }, []);
+
+  const progressRatio =
+    playerState.durationMs > 0
+      ? Math.min(1, Math.max(0, playerState.positionMs / playerState.durationMs))
+      : 0;
 
   return (
     <SafeAreaView style={styles.safeContainer}>
       <StatusBar style="dark" />
 
-      {/* Ust Baslik Cubugu */}
+      {/* Üst Başlık Çubuğu */}
       <View style={styles.topHeader}>
         <View style={styles.logoRow}>
           <View style={styles.logoBadge}>
@@ -51,7 +106,7 @@ export default function App() {
         </View>
       </View>
 
-      {/* Ana Govde (Aktif Ekran) */}
+      {/* Ana Gövde (Aktif Ekran) */}
       <View style={styles.tabContentArea}>
         {activeTab === 'downloader' ? (
           <DownloaderTab
@@ -60,11 +115,91 @@ export default function App() {
         ) : (
           <HistoryTab
             onSwitchToDownloader={() => setActiveTab('downloader')}
+            playerState={playerState}
           />
         )}
       </View>
 
-      {/* Alt Navigasyon Cubugu */}
+      {/* Arka Plan Müzik Çalar Alt Kontrol Çubuğu (Mini Player) */}
+      {playerState.isActive && (
+        <View style={styles.miniPlayerContainer}>
+          {/* Üst İlerleme Çizgisi */}
+          <View style={styles.miniProgressBg}>
+            <View
+              style={[
+                styles.miniProgressFill,
+                { width: `${Math.round(progressRatio * 100)}%` },
+              ]}
+            />
+          </View>
+
+          <View style={styles.miniPlayerContent}>
+            <TouchableOpacity
+              style={styles.miniSongInfo}
+              activeOpacity={0.8}
+              onPress={() => setActiveTab('history')}
+            >
+              <View style={styles.miniMusicIconBox}>
+                <Ionicons
+                  name={playerState.isPlaying ? 'musical-notes' : 'pause'}
+                  size={18}
+                  color="#FFFFFF"
+                />
+              </View>
+              <View style={styles.miniTextCol}>
+                <Text style={styles.miniSongTitle} numberOfLines={1}>
+                  {playerState.title || 'Şarkı Çalıyor'}
+                </Text>
+                <Text style={styles.miniSongMeta} numberOfLines={1}>
+                  {playerState.uploader || 'MediaToolkit'} •{' '}
+                  {formatMs(playerState.positionMs)} /{' '}
+                  {formatMs(playerState.durationMs)}
+                  {playerState.playlistCount > 1
+                    ? ` (${playerState.currentIndex + 1}/${playerState.playlistCount})`
+                    : ''}
+                </Text>
+              </View>
+            </TouchableOpacity>
+
+            {/* Kontroller: Önceki | Oynat/Duraklat | Sonraki | Kapat */}
+            <View style={styles.miniControlsRow}>
+              <TouchableOpacity
+                style={styles.miniCtrlBtn}
+                onPress={() => prevAudioTrack()}
+              >
+                <Ionicons name="play-skip-back" size={20} color="#E2E8F0" />
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.miniPlayPauseBtn}
+                onPress={() => togglePlayPauseAudio()}
+              >
+                <Ionicons
+                  name={playerState.isPlaying ? 'pause' : 'play'}
+                  size={20}
+                  color="#1E1B4B"
+                />
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.miniCtrlBtn}
+                onPress={() => nextAudioTrack()}
+              >
+                <Ionicons name="play-skip-forward" size={20} color="#E2E8F0" />
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.miniCloseBtn}
+                onPress={() => stopAudioPlayer()}
+              >
+                <Ionicons name="close" size={18} color="#94A3B8" />
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      )}
+
+      {/* Alt Navigasyon Çubuğu */}
       <View style={styles.bottomNav}>
         <TouchableOpacity
           style={[
@@ -96,7 +231,7 @@ export default function App() {
           onPress={() => setActiveTab('history')}
         >
           <Ionicons
-            name={activeTab === 'history' ? 'folder' : 'folder-outline'}
+            name={activeTab === 'history' ? 'musical-notes' : 'musical-notes-outline'}
             size={22}
             color={activeTab === 'history' ? '#2563EB' : '#94A3B8'}
           />
@@ -183,6 +318,82 @@ const styles = StyleSheet.create({
   },
   tabContentArea: {
     flex: 1,
+  },
+  miniPlayerContainer: {
+    backgroundColor: '#1E1B4B',
+    borderTopWidth: 1,
+    borderTopColor: '#312E81',
+  },
+  miniProgressBg: {
+    height: 3,
+    backgroundColor: '#312E81',
+    width: '100%',
+  },
+  miniProgressFill: {
+    height: '100%',
+    backgroundColor: '#818CF8',
+  },
+  miniPlayerContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 8,
+  },
+  miniSongInfo: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  miniMusicIconBox: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: '#4F46E5',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  miniTextCol: {
+    flex: 1,
+  },
+  miniSongTitle: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  miniSongMeta: {
+    color: '#A5B4FC',
+    fontSize: 11,
+    marginTop: 2,
+  },
+  miniControlsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  miniCtrlBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  miniPlayPauseBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  miniCloseBtn: {
+    width: 30,
+    height: 34,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 2,
   },
   bottomNav: {
     flexDirection: 'row',
