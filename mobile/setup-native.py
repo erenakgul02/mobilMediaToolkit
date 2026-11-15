@@ -39,9 +39,14 @@ def setup_native():
         else:
             props += "\nandroid.enableMinifyInReleaseBuilds=false\n"
 
+        # Exclude duplicate META-INF files coming from NewPipeExtractor / jsoup / rhino
+        excludes_Line = "android.packagingOptions.excludes=META-INF/README.md,META-INF/CHANGES,META-INF/COPYRIGHT,META-INF/DEPENDENCIES,META-INF/INDEX.LIST,META-INF/LICENSE,META-INF/LICENSE.txt,META-INF/NOTICE,META-INF/NOTICE.txt"
+        if "android.packagingOptions.excludes=" not in props:
+            props += f"\n{excludes_Line}\n"
+
         with open(gradle_props, "w", encoding="utf-8") as f:
             f.write(props)
-        print("Updated gradle.properties (useLegacyPackaging=false, minification=false)")
+        print("Updated gradle.properties (useLegacyPackaging=false, minification=false, packaging excludes)")
 
     # 3. Add JitPack repository to root build.gradle and settings.gradle
     root_gradle = os.path.join(ANDROID_DIR, "build.gradle")
@@ -121,7 +126,9 @@ def setup_native():
         dep_line = """
     // Lightweight pure-Java YouTube extractor engine (NewPipeExtractor v0.27.1, no Python/FFmpeg bloat)
     coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs_nio:2.1.5'
-    implementation 'com.github.TeamNewPipe:NewPipeExtractor:v0.27.1'
+    implementation('com.github.TeamNewPipe:NewPipeExtractor:v0.27.1') {
+        exclude group: 'com.google.code.findbugs', module: 'jsr305'
+    }
 """
         if "NewPipeExtractor" not in content and "dependencies {" in content:
             content = content.replace("dependencies {", f"dependencies {{\n{dep_line}")
@@ -130,6 +137,8 @@ def setup_native():
         # Enable coreLibraryDesugaringEnabled in android block
         desugar_block = """
     compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
         coreLibraryDesugaringEnabled true
     }
 """

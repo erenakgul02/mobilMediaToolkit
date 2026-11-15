@@ -49,7 +49,7 @@ jobs:
       - name: Android APK Derle (Hafif Release - NewPipeExtractor)
         run: |
           cd mobile/android
-          ./gradlew assembleRelease --no-daemon -PreactNativeArchitectures=arm64-v8a,x86_64
+          ./gradlew assembleRelease --no-daemon --stacktrace -PreactNativeArchitectures=arm64-v8a,x86_64
 
       - name: APK Dosyasini Hazirla
         run: |

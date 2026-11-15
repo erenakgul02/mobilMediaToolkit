@@ -13,11 +13,6 @@ import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.modules.core.DeviceEventManagerModule
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import okhttp3.OkHttpClient
-import okhttp3.RequestBody
 import org.schabi.newpipe.extractor.MediaFormat
 import org.schabi.newpipe.extractor.NewPipe
 import org.schabi.newpipe.extractor.downloader.Downloader
@@ -38,23 +33,17 @@ import java.io.RandomAccessFile
 import java.net.HttpURLConnection
 import java.net.URL
 import java.nio.ByteBuffer
-import java.util.concurrent.TimeUnit
+import java.nio.charset.StandardCharsets
+import java.util.concurrent.Executors
+import java.util.zip.GZIPInputStream
 import kotlin.math.max
-import kotlin.math.roundToInt
 
-class NewPipeOkHttpDownloader private constructor() : Downloader() {
+class NewPipeHttpDownloader private constructor() : Downloader() {
     companion object {
         const val USER_AGENT =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0"
-        val instance: NewPipeOkHttpDownloader by lazy { NewPipeOkHttpDownloader() }
+        val instance: NewPipeHttpDownloader by lazy { NewPipeHttpDownloader() }
     }
-
-    val client: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
-        .followRedirects(true)
-        .followSslRedirects(true)
-        .build()
 
     @Throws(IOException::class, ReCaptchaException::class)
     override fun execute(request: Request): Response {
@@ -63,45 +52,82 @@ class NewPipeOkHttpDownloader private constructor() : Downloader() {
         val headers = request.headers()
         val dataToSend = request.dataToSend()
 
-        val requestBody = if (dataToSend != null) {
-            RequestBody.create(null, dataToSend)
+        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+            connectTimeout = 30000
+            readTimeout = 30000
+            instanceFollowRedirects = true
+            requestMethod = httpMethod
+            setRequestProperty("User-Agent", USER_AGENT)
+            setRequestProperty("Accept-Encoding", "gzip")
+            if (url.contains("youtube.com")) {
+                setRequestProperty("Cookie", "SOCS=CAI; PREF=f2=8000000")
+            }
+        }
+
+        for ((headerName, headerValueList) in headers.entries) {
+            if (headerValueList.isNotEmpty()) {
+                conn.setRequestProperty(headerName, headerValueList[0])
+                for (i in 1 until headerValueList.size) {
+                    conn.addRequestProperty(headerName, headerValueList[i])
+                }
+            }
+        }
+
+        if (dataToSend != null) {
+            conn.doOutput = true
+            conn.setFixedLengthStreamingMode(dataToSend.size)
+            conn.outputStream.use { os ->
+                os.write(dataToSend)
+            }
         } else if (httpMethod.equals("POST", ignoreCase = true) || httpMethod.equals("PUT", ignoreCase = true)) {
-            RequestBody.create(null, ByteArray(0))
+            conn.doOutput = true
+            conn.setFixedLengthStreamingMode(0)
+            conn.outputStream.close()
+        }
+
+        val code = conn.responseCode
+        val message = conn.responseMessage ?: ""
+
+        if (code == 429) {
+            conn.disconnect()
+            throw ReCaptchaException("reCaptcha Challenge requested", url)
+        }
+
+        val rawStream = try {
+            if (code in 200..399) conn.inputStream else conn.errorStream
+        } catch (e: Exception) {
+            conn.errorStream
+        }
+
+        val contentEncoding = conn.contentEncoding ?: ""
+        val bodyString = if (rawStream != null) {
+            val decodedStream = if (contentEncoding.contains("gzip", ignoreCase = true)) {
+                GZIPInputStream(rawStream)
+            } else {
+                rawStream
+            }
+            decodedStream.bufferedReader(StandardCharsets.UTF_8).use { it.readText() }
         } else {
-            null
+            ""
         }
 
-        val reqBuilder = okhttp3.Request.Builder()
-            .url(url)
-            .method(httpMethod, requestBody)
-            .header("User-Agent", USER_AGENT)
-
-        if (url.contains("youtube.com")) {
-            reqBuilder.header("Cookie", "SOCS=CAI; PREF=f2=8000000")
-        }
-
-        for ((headerName, headerValueList) in headers) {
-            reqBuilder.removeHeader(headerName)
-            for (headerValue in headerValueList) {
-                reqBuilder.addHeader(headerName, headerValue)
+        val responseHeaders = HashMap<String, List<String>>()
+        for ((k, v) in conn.headerFields) {
+            if (k != null && v != null) {
+                responseHeaders[k] = v
             }
         }
 
-        client.newCall(reqBuilder.build()).execute().use { response ->
-            val code = response.code()
-            if (code == 429) {
-                throw ReCaptchaException("reCaptcha Challenge requested", url)
-            }
-            val bodyString = response.body()?.string() ?: ""
-            val latestUrl = response.request().url().toString()
-            return Response(
-                code,
-                response.message(),
-                response.headers().toMultimap(),
-                bodyString,
-                latestUrl
-            )
-        }
+        val latestUrl = conn.url?.toString() ?: url
+        conn.disconnect()
+
+        return Response(
+            code,
+            message,
+            responseHeaders,
+            bodyString,
+            latestUrl
+        )
     }
 }
 
@@ -109,6 +135,7 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
     ReactContextBaseJavaModule(reactContext) {
 
     private val TAG = "YoutubeDLModule"
+    private val executor = Executors.newCachedThreadPool()
 
     @Volatile
     private var isInitialized = false
@@ -119,7 +146,7 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
     private fun ensureInit() {
         if (!isInitialized) {
             NewPipe.init(
-                NewPipeOkHttpDownloader.instance,
+                NewPipeHttpDownloader.instance,
                 Localization("tr", "TR"),
                 ContentCountry("TR")
             )
@@ -135,7 +162,7 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
 
     @ReactMethod
     fun initEngine(promise: Promise) {
-        CoroutineScope(Dispatchers.IO).launch {
+        executor.execute {
             try {
                 ensureInit()
                 promise.resolve(true)
@@ -202,13 +229,13 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
             reactContext
                 .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
                 .emit("onNativeDownloadProgress", eventMap)
-        } catch ( ignored: Exception) {
+        } catch (ignored: Exception) {
         }
     }
 
     @ReactMethod
     fun getVideoInfo(url: String, promise: Promise) {
-        CoroutineScope(Dispatchers.IO).launch {
+        executor.execute {
             try {
                 ensureInit()
                 val info = StreamInfo.getInfo(url)
@@ -234,7 +261,7 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
     }
 
     private fun selectBestAudioStream(streams: List<AudioStream>, requestedQuality: String): AudioStream? {
-        val valid = streams.filter { it.isUrl && !it.content.isNullOrEmpty() }
+        val valid = streams.filter { it.isUrl() && it.content.isNotEmpty() }
         if (valid.isEmpty()) return null
 
         // Öncelik: M4A (AAC) formatı (tüm telefonlarda FFmpeg olmadan doğrudan çalışır ve MediaMuxer ile uyumludur)
@@ -256,7 +283,7 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
     }
 
     private fun selectBestAdaptiveVideoStream(streams: List<VideoStream>, maxHeight: Int): VideoStream? {
-        val valid = streams.filter { it.isUrl && !it.content.isNullOrEmpty() }
+        val valid = streams.filter { it.isUrl() && it.content.isNotEmpty() }
         if (valid.isEmpty()) return null
 
         // MediaMuxer ve tüm cihazlarla %100 uyum için MPEG_4 + avc1 (H.264) tercih et
@@ -278,7 +305,7 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
     }
 
     private fun selectBestMuxedVideoStream(streams: List<VideoStream>, maxHeight: Int): VideoStream? {
-        val valid = streams.filter { it.isUrl && !it.content.isNullOrEmpty() }
+        val valid = streams.filter { it.isUrl() && it.content.isNotEmpty() }
         if (valid.isEmpty()) return null
 
         val mp4Pool = valid.filter { it.format == MediaFormat.MPEG_4 }.ifEmpty { valid }
@@ -298,7 +325,7 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
         val userAgent = if (isVisionOs) {
             YoutubeParsingHelper.getVisionOsUserAgent(null)
         } else {
-            NewPipeOkHttpDownloader.USER_AGENT
+            NewPipeHttpDownloader.USER_AGENT
         }
 
         val conn = (URL(streamUrl).openConnection() as HttpURLConnection).apply {
@@ -569,7 +596,7 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
 
     @ReactMethod
     fun download(url: String, format: String, quality: String, promise: Promise) {
-        CoroutineScope(Dispatchers.IO).launch {
+        executor.execute {
             val tempFiles = mutableListOf<File>()
             try {
                 ensureInit()
