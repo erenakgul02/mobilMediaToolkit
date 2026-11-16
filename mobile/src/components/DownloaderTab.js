@@ -45,6 +45,7 @@ export default function DownloaderTab({
 
   // Kalıcı Otomatik İndirme Tercihi (Varsayılan: M4A Yüksek Kalite)
   const [activePreset, setActivePreset] = useState(DOWNLOAD_PRESETS[0]);
+  const [presetMenuOpen, setPresetMenuOpen] = useState(false);
   const [mediaType, setMediaType] = useState('m4a');
   const [selectedQuality, setSelectedQuality] = useState('high');
 
@@ -89,6 +90,7 @@ export default function DownloaderTab({
     setActivePreset(preset);
     setMediaType(preset.type);
     setSelectedQuality(preset.quality);
+    setPresetMenuOpen(false);
     await setDefaultDownloadPreset(preset.id);
   };
 
@@ -335,9 +337,13 @@ export default function DownloaderTab({
       showsVerticalScrollIndicator={false}
       keyboardShouldPersistTaps="handled"
     >
-      {/* ÜST SABİT OTOMATİK İNDİRME FORMATI SEÇİCİSİ (Varsayılan: M4A Yüksek Kalite) */}
+      {/* ÜST AÇILIR/KAPANIR OTOMATİK İNDİRME FORMATI SEÇİCİSİ (Varsayılan: M4A Yüksek Kalite) */}
       <View style={[styles.presetCard, isDarkMode && styles.cardDark]}>
-        <View style={styles.presetHeaderRow}>
+        <TouchableOpacity
+          style={styles.presetHeaderRow}
+          activeOpacity={0.78}
+          onPress={() => setPresetMenuOpen((prev) => !prev)}
+        >
           <View style={styles.presetTitleLeft}>
             <Ionicons
               name="flash"
@@ -345,57 +351,119 @@ export default function DownloaderTab({
               color={isDarkMode ? '#60A5FA' : '#2563EB'}
             />
             <Text style={[styles.presetHeaderTitle, isDarkMode && styles.textPrimaryDark]}>
-              Otomatik İndirme Formatı
+              İndirme Şekli
             </Text>
           </View>
-          <Text style={[styles.presetActiveBadgeText, isDarkMode && { color: '#93C5FD' }]}>
-            {activePreset.fullLabel}
-          </Text>
-        </View>
 
-        <View style={styles.presetChipsRow}>
-          {DOWNLOAD_PRESETS.map((preset) => {
-            const isSelected = activePreset.id === preset.id;
-            const isAudioPreset = preset.type === 'm4a';
-            return (
-              <TouchableOpacity
-                key={preset.id}
-                style={[
-                  styles.presetChip,
-                  isDarkMode && styles.presetChipDark,
-                  isSelected &&
-                    (isAudioPreset
-                      ? styles.presetChipSelectedAudio
-                      : styles.presetChipSelectedVideo),
-                ]}
-                activeOpacity={0.8}
-                onPress={() => handleSelectPreset(preset)}
-              >
-                <Ionicons
-                  name={preset.icon}
-                  size={13}
-                  color={
-                    isSelected
-                      ? '#FFFFFF'
-                      : isDarkMode
-                      ? '#94A3B8'
-                      : '#475569'
-                  }
-                />
-                <Text
+          <View
+            style={[
+              styles.presetSelectedBadge,
+              activePreset.type === 'm4a'
+                ? styles.presetSelectedBadgeAudio
+                : styles.presetSelectedBadgeVideo,
+            ]}
+          >
+            <Ionicons name={activePreset.icon} size={13} color="#FFFFFF" />
+            <Text style={styles.presetSelectedBadgeText} numberOfLines={1}>
+              {activePreset.fullLabel}
+            </Text>
+            <Ionicons
+              name={presetMenuOpen ? 'chevron-up' : 'chevron-down'}
+              size={14}
+              color="#FFFFFF"
+            />
+          </View>
+        </TouchableOpacity>
+
+        {presetMenuOpen && (
+          <View
+            style={[
+              styles.presetDropdownList,
+              isDarkMode && styles.presetDropdownListDark,
+            ]}
+          >
+            {DOWNLOAD_PRESETS.map((preset) => {
+              const isSelected = activePreset.id === preset.id;
+              const isAudioPreset = preset.type === 'm4a';
+              return (
+                <TouchableOpacity
+                  key={preset.id}
                   style={[
-                    styles.presetChipText,
-                    isDarkMode && styles.textSecondaryDark,
-                    isSelected && styles.presetChipTextSelected,
+                    styles.presetDropdownItem,
+                    isDarkMode && styles.presetDropdownItemDark,
+                    isSelected &&
+                      (isDarkMode
+                        ? styles.presetDropdownItemActiveDark
+                        : styles.presetDropdownItemActive),
                   ]}
-                  numberOfLines={1}
+                  activeOpacity={0.8}
+                  onPress={() => handleSelectPreset(preset)}
                 >
-                  {preset.shortLabel}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
+                  <View style={styles.presetDropdownItemLeft}>
+                    <View
+                      style={[
+                        styles.presetDropdownIconBox,
+                        {
+                          backgroundColor: isAudioPreset
+                            ? isSelected
+                              ? '#4F46E5'
+                              : isDarkMode
+                              ? '#1E1B4B'
+                              : '#EEF2FF'
+                            : isSelected
+                            ? '#0284C7'
+                            : isDarkMode
+                            ? '#0C4A6E'
+                            : '#E0F2FE',
+                        },
+                      ]}
+                    >
+                      <Ionicons
+                        name={preset.icon}
+                        size={15}
+                        color={
+                          isSelected
+                            ? '#FFFFFF'
+                            : isAudioPreset
+                            ? isDarkMode
+                              ? '#A5B4FC'
+                              : '#4F46E5'
+                            : isDarkMode
+                            ? '#38BDF8'
+                            : '#0284C7'
+                        }
+                      />
+                    </View>
+                    <Text
+                      style={[
+                        styles.presetDropdownItemText,
+                        isDarkMode && styles.textPrimaryDark,
+                        isSelected &&
+                          (isDarkMode
+                            ? { color: '#93C5FD', fontWeight: '800' }
+                            : { color: '#1D4ED8', fontWeight: '800' }),
+                      ]}
+                    >
+                      {preset.fullLabel}
+                    </Text>
+                  </View>
+
+                  <Ionicons
+                    name={isSelected ? 'checkmark-circle' : 'radio-button-off'}
+                    size={18}
+                    color={
+                      isSelected
+                        ? isDarkMode
+                          ? '#60A5FA'
+                          : '#2563EB'
+                        : '#94A3B8'
+                    }
+                  />
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        )}
       </View>
 
       {/* Arama Motoru & URL Giriş Kartı */}
@@ -1170,11 +1238,11 @@ const styles = StyleSheet.create({
   textSecondaryDark: {
     color: '#94A3B8',
   },
-  // Üst Otomatik İndirme Formatı Seçici Stilleri
+  // Üst Açılır/Kapanır Otomatik İndirme Formatı Seçici Stilleri
   presetCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 14,
-    paddingHorizontal: 12,
+    paddingHorizontal: 13,
     paddingVertical: 10,
     marginBottom: 12,
     borderWidth: 1,
@@ -1184,59 +1252,87 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 8,
   },
   presetTitleLeft: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
+    gap: 6,
   },
   presetHeaderTitle: {
-    fontSize: 12.5,
+    fontSize: 13,
     fontWeight: '800',
     color: '#0F172A',
   },
-  presetActiveBadgeText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#2563EB',
-  },
-  presetChipsRow: {
-    flexDirection: 'row',
-    gap: 6,
-  },
-  presetChip: {
-    flex: 1,
+  presetSelectedBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: 4,
-    paddingVertical: 7,
-    paddingHorizontal: 4,
-    borderRadius: 9,
-    backgroundColor: '#F1F5F9',
+    gap: 6,
+    paddingHorizontal: 11,
+    paddingVertical: 6,
+    borderRadius: 10,
+  },
+  presetSelectedBadgeAudio: {
+    backgroundColor: '#4F46E5',
+  },
+  presetSelectedBadgeVideo: {
+    backgroundColor: '#0284C7',
+  },
+  presetSelectedBadgeText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  presetDropdownList: {
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
+    gap: 7,
+  },
+  presetDropdownListDark: {
+    borderTopColor: '#1E293B',
+  },
+  presetDropdownItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 9,
+    paddingHorizontal: 11,
+    borderRadius: 10,
+    backgroundColor: '#F8FAFC',
     borderWidth: 1,
     borderColor: '#E2E8F0',
   },
-  presetChipDark: {
+  presetDropdownItemDark: {
     backgroundColor: '#0B0F19',
     borderColor: '#1E293B',
   },
-  presetChipSelectedAudio: {
-    backgroundColor: '#4F46E5',
-    borderColor: '#4F46E5',
+  presetDropdownItemActive: {
+    backgroundColor: '#EFF6FF',
+    borderColor: '#3B82F6',
   },
-  presetChipSelectedVideo: {
-    backgroundColor: '#0284C7',
-    borderColor: '#0284C7',
+  presetDropdownItemActiveDark: {
+    backgroundColor: '#1E293B',
+    borderColor: '#3B82F6',
   },
-  presetChipText: {
-    fontSize: 10.5,
-    fontWeight: '700',
-    color: '#475569',
+  presetDropdownItemLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+    flex: 1,
   },
-  presetChipTextSelected: {
-    color: '#FFFFFF',
+  presetDropdownIconBox: {
+    width: 28,
+    height: 28,
+    borderRadius: 7,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  presetDropdownItemText: {
+    fontSize: 12.5,
+    fontWeight: '600',
+    color: '#334155',
+    flex: 1,
   },
   card: {
     backgroundColor: '#FFFFFF',

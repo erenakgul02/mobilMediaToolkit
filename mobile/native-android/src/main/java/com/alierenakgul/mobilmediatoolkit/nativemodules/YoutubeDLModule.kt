@@ -406,7 +406,6 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
         try {
             window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             window.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
-            window.addFlags(WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 val lp = window.attributes
                 lp.layoutInDisplayCutoutMode =
@@ -430,22 +429,6 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
                     or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
                     or View.SYSTEM_UI_FLAG_FULLSCREEN
                 )
-        } catch (_: Exception) {}
-    }
-
-    private fun restoreSystemBars(window: Window?) {
-        if (window == null) return
-        try {
-            window.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
-            window.clearFlags(WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                window.setDecorFitsSystemWindows(true)
-                window.insetsController?.show(
-                    WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars()
-                )
-            }
-            @Suppress("DEPRECATION")
-            window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_VISIBLE
         } catch (_: Exception) {}
     }
 
@@ -594,7 +577,7 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
                 }
 
                 "fullscreen" -> {
-                    // 4 köşe tam ekran çerçeve ikonu
+                    // 4 köşe dışa bakan tam ekran çerçeve ikonu
                     val r = minOf(w, h) * 0.27f
                     val arm = r * 0.55f
                     path.reset()
@@ -614,6 +597,30 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
                     path.moveTo(cx - r + arm, cy + r)
                     path.lineTo(cx - r, cy + r)
                     path.lineTo(cx - r, cy + r - arm)
+                    canvas.drawPath(path, strokePaint)
+                }
+
+                "exit_fullscreen" -> {
+                    // 4 köşe içe bakan tam ekrandan çıkış (küçültme) ikonu
+                    val r = minOf(w, h) * 0.28f
+                    val inner = r * 0.36f
+                    path.reset()
+                    // Sol üst
+                    path.moveTo(cx - r, cy - inner)
+                    path.lineTo(cx - inner, cy - inner)
+                    path.lineTo(cx - inner, cy - r)
+                    // Sağ üst
+                    path.moveTo(cx + inner, cy - r)
+                    path.lineTo(cx + inner, cy - inner)
+                    path.lineTo(cx + r, cy - inner)
+                    // Sağ alt
+                    path.moveTo(cx + r, cy + inner)
+                    path.lineTo(cx + inner, cy + inner)
+                    path.lineTo(cx + inner, cy + r)
+                    // Sol alt
+                    path.moveTo(cx - inner, cy + r)
+                    path.lineTo(cx - inner, cy + inner)
+                    path.lineTo(cx - r, cy + inner)
                     canvas.drawPath(path, strokePaint)
                 }
             }
@@ -677,9 +684,22 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
                 videoContainer.addView(videoView)
                 rootLayout.addView(videoContainer)
 
-                fun updateVideoBounds() {
-                    val containerW = rootLayout.width
-                    val containerH = rootLayout.height
+                fun updateVideoBounds(explicitW: Int = 0, explicitH: Int = 0) {
+                    dialog.window?.setLayout(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT
+                    )
+                    val dm = activity.resources.displayMetrics
+                    val containerW = when {
+                        explicitW > 0 -> explicitW
+                        rootLayout.width > 0 -> rootLayout.width
+                        else -> dm.widthPixels
+                    }
+                    val containerH = when {
+                        explicitH > 0 -> explicitH
+                        rootLayout.height > 0 -> rootLayout.height
+                        else -> dm.heightPixels
+                    }
                     if (containerW <= 0 || containerH <= 0 || videoW <= 0 || videoH <= 0) return
                     val vAspect = videoW.toFloat() / videoH.toFloat()
                     val cAspect = containerW.toFloat() / containerH.toFloat()
@@ -688,11 +708,16 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
                     } else {
                         (containerH * vAspect).toInt() to containerH
                     }
-                    videoView.layoutParams = FrameLayout.LayoutParams(
-                        fittedW.coerceAtLeast(1),
-                        fittedH.coerceAtLeast(1),
-                        Gravity.CENTER
-                    )
+                    val targetW = fittedW.coerceAtLeast(1)
+                    val targetH = fittedH.coerceAtLeast(1)
+                    val currentLp = videoView.layoutParams
+                    if (currentLp == null || currentLp.width != targetW || currentLp.height != targetH) {
+                        videoView.layoutParams = FrameLayout.LayoutParams(
+                            targetW,
+                            targetH,
+                            Gravity.CENTER
+                        )
+                    }
                 }
 
                 // Tüm Kontrolleri Taşıyan Katman (Yumuşak geçişli sinema arayüzü)
@@ -701,6 +726,46 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.MATCH_PARENT
                     )
+                }
+
+                val topFullscreenIconView = PlayerVectorIconView(activity, "fullscreen")
+                val bottomFullscreenIconView = PlayerVectorIconView(activity, "fullscreen")
+                val bottomFullscreenLabelTv = TextView(activity).apply {
+                    text = "Tam Ekran"
+                    setTextColor(Color.WHITE)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
+                    typeface = Typeface.DEFAULT_BOLD
+                }
+
+                fun syncFullscreenUiState() {
+                    if (isLandscape) {
+                        topFullscreenIconView.updateIcon("exit_fullscreen")
+                        bottomFullscreenIconView.updateIcon("exit_fullscreen")
+                        bottomFullscreenLabelTv.text = "Tam Ekrandan Çık"
+                    } else {
+                        topFullscreenIconView.updateIcon("fullscreen")
+                        bottomFullscreenIconView.updateIcon("fullscreen")
+                        bottomFullscreenLabelTv.text = "Tam Ekran"
+                    }
+                }
+
+                fun toggleOrientation() {
+                    isLandscape = !isLandscape
+                    syncFullscreenUiState()
+                    activity.requestedOrientation = if (isLandscape) {
+                        ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                    } else {
+                        ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                    }
+                    for (delayMs in listOf(80L, 220L, 420L)) {
+                        uiHandler.postDelayed({
+                            if (dialog.isShowing) {
+                                applyImmersiveFullscreen(dialog.window)
+                                updateVideoBounds()
+                                rootLayout.requestLayout()
+                            }
+                        }, delayMs)
+                    }
                 }
 
                 // 1. ÜST SİNEMA GRADYAN BARI (Geri İkonu + Başlık + Tam Ekran İkonu)
@@ -766,20 +831,6 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
                 titleCol.addView(titleTv)
                 titleCol.addView(subTv)
 
-                fun toggleOrientation() {
-                    isLandscape = !isLandscape
-                    activity.requestedOrientation = if (isLandscape) {
-                        ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-                    } else {
-                        ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-                    }
-                    uiHandler.postDelayed({
-                        applyImmersiveFullscreen(dialog.window)
-                        applyImmersiveFullscreen(activity.window)
-                        updateVideoBounds()
-                    }, 150L)
-                }
-
                 val fullscreenTopBtn = FrameLayout(activity).apply {
                     layoutParams = LinearLayout.LayoutParams(dpToPx(42), dpToPx(42))
                     background = GradientDrawable().apply {
@@ -788,7 +839,7 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
                         setStroke(dpToPx(1), Color.parseColor("#33FFFFFF"))
                     }
                     addView(
-                        PlayerVectorIconView(activity, "fullscreen"),
+                        topFullscreenIconView,
                         FrameLayout.LayoutParams(
                             ViewGroup.LayoutParams.MATCH_PARENT,
                             ViewGroup.LayoutParams.MATCH_PARENT
@@ -970,19 +1021,12 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
                         cornerRadius = dpToPx(8).toFloat()
                     }
                     addView(
-                        PlayerVectorIconView(activity, "fullscreen"),
+                        bottomFullscreenIconView,
                         LinearLayout.LayoutParams(dpToPx(18), dpToPx(18)).apply {
                             marginEnd = dpToPx(6)
                         }
                     )
-                    addView(
-                        TextView(activity).apply {
-                            text = "Tam Ekran"
-                            setTextColor(Color.WHITE)
-                            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
-                            typeface = Typeface.DEFAULT_BOLD
-                        }
-                    )
+                    addView(bottomFullscreenLabelTv)
                     setOnClickListener {
                         toggleOrientation()
                     }
@@ -1020,10 +1064,12 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
                 }
 
                 // Ekran boyutu veya yönü değiştiğinde (döndürüldüğünde) video oranını koruyarak yeniden boyutlandır
-                rootLayout.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+                rootLayout.addOnLayoutChangeListener { _, left, top, right, bottom, _, _, _, _ ->
+                    val newW = (right - left).coerceAtLeast(0)
+                    val newH = (bottom - top).coerceAtLeast(0)
                     uiHandler.post {
                         applyImmersiveFullscreen(dialog.window)
-                        updateVideoBounds()
+                        updateVideoBounds(newW, newH)
                     }
                 }
 
@@ -1093,7 +1139,11 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
                     } catch (_: Exception) {}
                     try {
                         activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-                        restoreSystemBars(activity.window)
+                        for (delayMs in listOf(100L, 280L)) {
+                            uiHandler.postDelayed({
+                                activity.window?.decorView?.requestLayout()
+                            }, delayMs)
+                        }
                     } catch (_: Exception) {}
                 }
 
@@ -1105,7 +1155,6 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
                 )
                 dialog.show()
                 applyImmersiveFullscreen(dialog.window)
-                applyImmersiveFullscreen(activity.window)
                 promise.resolve(true)
             } catch (e: Exception) {
                 Log.e(TAG, "Uygulama içi video oynatıcı hatası", e)
