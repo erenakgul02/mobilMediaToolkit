@@ -15,6 +15,8 @@ import time
 import json
 import socket
 import io
+import ipaddress
+import urllib.parse
 import qrcode
 import subprocess
 import re
@@ -36,11 +38,19 @@ os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 FFMPEG_PATH = imageio_ffmpeg.get_ffmpeg_exe()
 
 # In-memory download tasks tracker
-# task_id -> { id, url, title, thumbnail, type, quality, status, progress, speed, eta, filename, filesize, error, createdAt }
 tasks = {}
+MAX_CONCURRENT_DOWNLOADS = 3
 
 PUBLIC_URL = None
 cloudflared_proc = None
+
+ALLOWED_YOUTUBE_HOSTS = {
+    "youtube.com",
+    "www.youtube.com",
+    "m.youtube.com",
+    "music.youtube.com",
+    "youtu.be",
+}
 
 def start_tunnel_thread():
     global PUBLIC_URL, cloudflared_proc
@@ -50,7 +60,7 @@ def start_tunnel_thread():
 
     try:
         cloudflared_proc = subprocess.Popen(
-            [cloudflared_bin, "tunnel", "--url", "http://localhost:5000"],
+            [cloudflared_bin, "tunnel", "--url", "http://127.0.0.1:5000"],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -64,23 +74,9 @@ def start_tunnel_thread():
             m = re.search(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com", line)
             if m:
                 PUBLIC_URL = m.group(0)
-                print("\n=======================================================")
-                print(f">> [CANLI CLOUDFLARE HTTPS LINK]: {PUBLIC_URL}")
-                print(f">> Telefondan ve Safari'den aninda acabilirsiniz!")
-                print("=======================================================\n")
                 break
     except Exception as e:
         print(f"Tunnel thread error: {e}")
-
-def get_local_ip():
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-        s.close()
-        return ip
-    except Exception:
-        return "127.0.0.1"
 
 def load_history():
     if os.path.exists(METADATA_FILE):
@@ -93,10 +89,8 @@ def load_history():
 
 def save_to_history(item):
     history = load_history()
-    # Filter out if already exists
     history = [h for h in history if h.get("filename") != item.get("filename")]
     history.insert(0, item)
-    # Keep last 50
     history = history[:50]
     try:
         with open(METADATA_FILE, "w", encoding="utf-8") as f:
@@ -125,37 +119,27 @@ def format_duration(seconds):
 
 @app.route("/api/health", methods=["GET"])
 def health():
-    ip = get_local_ip()
-    port = 5000
-    lan_url = f"http://{ip}:{port}"
-    active_mobile_url = PUBLIC_URL or lan_url
+    # Hassas sistem yolları (ffmpeg_path) ve yerel IP (local_ip) dışarıya sızdırılmaz
     return jsonify({
         "status": "online",
         "ffmpeg": bool(FFMPEG_PATH and os.path.exists(FFMPEG_PATH)),
-        "ffmpeg_path": FFMPEG_PATH,
-        "local_ip": ip,
-        "mobile_url": active_mobile_url,
-        "public_url": PUBLIC_URL,
-        "qr_url": f"/api/qr",
         "timestamp": datetime.now().isoformat()
     })
 
 @app.route("/api/qr", methods=["GET"])
 def get_qr():
     target = request.args.get("url")
-    if not target or target == "undefined":
-        target = PUBLIC_URL or f"http://{get_local_ip()}:5000"
-    
-    img = qrcode.make(target)
+    if not target or target == "undefined" or not is_valid_media_url(target):
+        target = "https://github.com/erenakgul02/mobilMediaToolkit"
+
+    img = qrcode.make(target[:512])
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     buf.seek(0)
     return send_file(buf, mimetype="image/png")
 
-import urllib.parse
-
 def is_valid_media_url(url):
-    """Validate that the URL is a safe, valid HTTP/HTTPS link to prevent SSRF and injection."""
+    """Validate that the URL is a safe, official YouTube link to prevent SSRF and injection."""
     if not url or not isinstance(url, str) or len(url) > 2048:
         return False
     try:
@@ -164,10 +148,14 @@ def is_valid_media_url(url):
             return False
         if not parsed.netloc:
             return False
-        # Block internal / loopback addresses to prevent SSRF
-        netloc = parsed.netloc.lower().split(":")[0]
-        blocked_hosts = ("localhost", "127.0.0.1", "0.0.0.0", "169.254.169.254")
-        if netloc in blocked_hosts or netloc.startswith("192.168.") or netloc.startswith("10."):
+        host = parsed.netloc.lower().split(":")[0]
+        # Ham IPv4 / IPv6 adreslerini tamamen engelle (SSRF koruması)
+        try:
+            ipaddress.ip_address(host.strip("[]"))
+            return False
+        except ValueError:
+            pass
+        if host not in ALLOWED_YOUTUBE_HOSTS:
             return False
         return True
     except Exception:
@@ -179,7 +167,7 @@ def get_video_info():
     url = data.get("url", "").strip()
 
     if not is_valid_media_url(url):
-        return jsonify({"error": "Lütfen geçerli ve güvenli bir YouTube / medya bağlantısı girin."}), 400
+        return jsonify({"error": "Lütfen geçerli ve güvenli bir YouTube bağlantısı girin."}), 400
 
     ydl_opts = {
         'quiet': True,
@@ -191,8 +179,7 @@ def get_video_info():
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
-            
-            # Extract video qualities
+
             available_resolutions = set()
             if 'formats' in info:
                 for f in info['formats']:
@@ -231,7 +218,7 @@ def get_video_info():
             })
     except Exception as e:
         print(f"Info extraction error: {e}")
-        return jsonify({"error": f"Video bilgisi alınamadı: {str(e)}"}), 400
+        return jsonify({"error": "Video bilgisi alınamadı. Lütfen geçerli bir YouTube bağlantısı girin."}), 400
 
 def run_download_thread(task_id, url, media_type, quality, title_hint):
     task = tasks[task_id]
@@ -287,9 +274,7 @@ def run_download_thread(task_id, url, media_type, quality, title_hint):
             }],
         })
     else:
-        # mp4 video
         res = quality if quality.isdigit() else "720"
-        # Download best video matching height + best audio and merge to mp4
         ydl_opts.update({
             'format': f'bestvideo[height<={res}][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<={res}]+bestaudio/best[height<={res}]/best',
             'merge_output_format': 'mp4',
@@ -306,7 +291,6 @@ def run_download_thread(task_id, url, media_type, quality, title_hint):
             task["title"] = meta.get("title", title_hint)
             task["thumbnail"] = meta.get("thumbnail", task.get("thumbnail"))
 
-        # Find final file in download dir matching task_id
         final_filename = None
         for fname in os.listdir(DOWNLOAD_DIR):
             if f"_{task_id[:6]}." in fname:
@@ -314,7 +298,6 @@ def run_download_thread(task_id, url, media_type, quality, title_hint):
                 break
 
         if not final_filename:
-            # Fallback search
             for fname in os.listdir(DOWNLOAD_DIR):
                 if task_id[:6] in fname:
                     final_filename = fname
@@ -323,7 +306,7 @@ def run_download_thread(task_id, url, media_type, quality, title_hint):
         if final_filename:
             filepath = os.path.join(DOWNLOAD_DIR, final_filename)
             size = os.path.getsize(filepath) if os.path.exists(filepath) else 0
-            
+
             task.update({
                 "status": "completed",
                 "progress": 100,
@@ -333,7 +316,6 @@ def run_download_thread(task_id, url, media_type, quality, title_hint):
                 "completedAt": datetime.now().strftime("%d.%m.%Y %H:%M")
             })
 
-            # Save to history
             save_to_history({
                 "id": task_id,
                 "title": task["title"],
@@ -355,14 +337,22 @@ def run_download_thread(task_id, url, media_type, quality, title_hint):
         print(f"Download thread error: {e}")
         task.update({
             "status": "failed",
-            "error": str(e)
+            "error": "İndirme işlemi sırasında bir hata oluştu."
         })
 
 @app.route("/api/download", methods=["POST"])
 def start_download():
+    active_count = sum(
+        1 for t in tasks.values() if t.get("status") in ("queued", "downloading", "processing")
+    )
+    if active_count >= MAX_CONCURRENT_DOWNLOADS:
+        return jsonify({
+            "error": "Çok fazla eşzamanlı indirme var. Lütfen mevcut indirmelerin tamamlanmasını bekleyin."
+        }), 429
+
     data = request.get_json() or {}
     url = data.get("url", "").strip()
-    media_type = data.get("type", "mp3") # 'mp3' or 'mp4'
+    media_type = data.get("type", "mp3")
     quality = str(data.get("quality", "320"))
     title_hint = str(data.get("title", "Video"))[:200]
     thumbnail = str(data.get("thumbnail", ""))[:500]
@@ -413,7 +403,6 @@ def get_progress(task_id):
 
 @app.route("/api/download-direct/<path:filename>", methods=["GET"])
 def download_direct(filename):
-    import urllib.parse
     filename = urllib.parse.unquote(filename)
     if ".." in filename or "/" in filename or "\\" in filename:
         return jsonify({"error": "Geçersiz dosya adı veya yetkisiz erişim."}), 400
@@ -422,7 +411,7 @@ def download_direct(filename):
     safe_dir = os.path.abspath(DOWNLOAD_DIR)
     file_path = os.path.abspath(os.path.join(safe_dir, clean_name))
 
-    if not file_path.startswith(safe_dir) or not os.path.isfile(file_path):
+    if not file_path.startswith(safe_dir + os.sep) or not os.path.isfile(file_path):
         return jsonify({"error": "Dosya bulunamadı veya yetkisiz erişim."}), 404
 
     return send_from_directory(safe_dir, clean_name, as_attachment=True)
@@ -437,7 +426,7 @@ def download_task_file(task_id):
     safe_dir = os.path.abspath(DOWNLOAD_DIR)
     file_path = os.path.abspath(os.path.join(safe_dir, clean_name))
 
-    if not file_path.startswith(safe_dir) or not os.path.isfile(file_path):
+    if not file_path.startswith(safe_dir + os.sep) or not os.path.isfile(file_path):
         return jsonify({"error": "Dosya diskte bulunamadı."}), 404
 
     return send_from_directory(safe_dir, clean_name, as_attachment=True)
@@ -445,13 +434,12 @@ def download_task_file(task_id):
 @app.route("/api/history", methods=["GET"])
 def get_history():
     history = load_history()
-    # verify files still exist
     valid = []
     safe_dir = os.path.abspath(DOWNLOAD_DIR)
     for item in history:
         clean_name = os.path.basename(item.get("filename", ""))
         fpath = os.path.abspath(os.path.join(safe_dir, clean_name))
-        if fpath.startswith(safe_dir) and os.path.exists(fpath):
+        if fpath.startswith(safe_dir + os.sep) and os.path.exists(fpath):
             valid.append(item)
     return jsonify(valid)
 
@@ -464,7 +452,7 @@ def delete_history_item(filename):
     clean_name = os.path.basename(filename)
     fpath = os.path.abspath(os.path.join(safe_dir, clean_name))
 
-    if not fpath.startswith(safe_dir):
+    if not fpath.startswith(safe_dir + os.sep):
         return jsonify({"error": "Yetkisiz erişim engellendi."}), 403
 
     if not os.path.exists(fpath):
@@ -472,8 +460,8 @@ def delete_history_item(filename):
 
     try:
         os.remove(fpath)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    except Exception:
+        return jsonify({"error": "Dosya silinemedi."}), 500
 
     history = load_history()
     history = [h for h in history if os.path.basename(h.get("filename", "")) != clean_name]
@@ -496,7 +484,6 @@ def serve_frontend(path):
     safe_dist = os.path.abspath(DIST_DIR)
     target_file = os.path.abspath(os.path.join(safe_dist, path))
 
-    # Path traversal check for static files
     if not target_file.startswith(safe_dist):
         return jsonify({"error": "Yetkisiz erişim engellendi."}), 403
 
@@ -510,18 +497,16 @@ def serve_frontend(path):
     return jsonify({"message": "Mobil Media Toolkit API çalışıyor."})
 
 if __name__ == "__main__":
-    ip = get_local_ip()
+    host = os.environ.get("HOST", "127.0.0.1")
     port = int(os.environ.get("PORT", 5000))
 
-    # Start Cloudflare Tunnel in background for instant public HTTPS
-    t_tunnel = threading.Thread(target=start_tunnel_thread, daemon=True)
-    t_tunnel.start()
+    # Güvenlik: Otomatik dış tünel varsayılan olarak kapalıdır
+    if os.environ.get("ENABLE_PUBLIC_TUNNEL", "").lower() == "true":
+        t_tunnel = threading.Thread(target=start_tunnel_thread, daemon=True)
+        t_tunnel.start()
 
     print("\n=======================================================")
     print(">> Mobil Media Toolkit Python Backend Baslatiliyor...")
-    print(f">> Yerel Ag IP (Mobil): http://{ip}:{port}")
-    print(f">> Laptop (Localhost):  http://127.0.0.1:{port}")
-    print(f">> FFMPEG Yolu:        {FFMPEG_PATH}")
-    print(">> Cloudflare Canli Baglanti hazirlaniyor...")
+    print(f">> Localhost: http://{host}:{port}")
     print("=======================================================\n")
-    app.run(host="0.0.0.0", port=port, debug=False, threaded=True)
+    app.run(host=host, port=port, debug=False, threaded=True)

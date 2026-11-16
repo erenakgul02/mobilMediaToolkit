@@ -582,7 +582,7 @@ class MusicPlayerService : Service() {
 
     private fun loadVinylArtworkForTrack(track: PlaylistTrack) {
         val thumbUrl = track.thumbnail.trim()
-        if (thumbUrl.isEmpty()) {
+        if (thumbUrl.isEmpty() || !thumbUrl.startsWith("https://", ignoreCase = true)) {
             val fallbackVinyl = bitmapCache.get("__default_vinyl__")
                 ?: createVinylRecordBitmap(null).also { bitmapCache.put("__default_vinyl__", it) }
             currentVinylBitmap = fallbackVinyl

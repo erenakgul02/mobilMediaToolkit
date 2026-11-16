@@ -239,20 +239,89 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
         // React Native NativeEventEmitter uyumluluğu için
     }
 
+    private val ALLOWED_MEDIA_EXTENSIONS = setOf(
+        "m4a", "mp4a", "aac", "mp3", "webm", "ogg", "opus", "mp4", "m4v"
+    )
+
+    private fun getAllowedMediaRoots(): List<String> {
+        val roots = mutableListOf<File>()
+        try {
+            roots.add(getStorageDir())
+            roots.add(
+                File(
+                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+                    "MediaToolkit"
+                )
+            )
+            reactContext.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)?.let {
+                roots.add(File(it, "MediaToolkit"))
+            }
+            roots.add(File(reactContext.filesDir, "MediaToolkit"))
+            roots.add(reactContext.cacheDir)
+        } catch (_: Exception) {}
+        return roots.mapNotNull {
+            try {
+                it.canonicalPath
+            } catch (_: Exception) {
+                null
+            }
+        }
+    }
+
+    private fun isSafeMediaFile(candidate: File): Boolean {
+        return try {
+            if (!candidate.exists() || !candidate.isFile) return false
+            val ext = candidate.extension.lowercase()
+            if (ext !in ALLOWED_MEDIA_EXTENSIONS) return false
+            val canonical = candidate.canonicalPath
+            val allowedRoots = getAllowedMediaRoots()
+            allowedRoots.any { root ->
+                canonical.startsWith(root + File.separator) || canonical == root
+            }
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun requireSafeYouTubeUrl(rawUrl: String): String {
+        val trimmed = rawUrl.trim()
+        if (trimmed.isEmpty() || trimmed.length > 2048) {
+            throw IOException("Geçersiz bağlantı uzunluğu.")
+        }
+        val parsed = Uri.parse(trimmed)
+        val scheme = parsed.scheme?.lowercase() ?: ""
+        val host = parsed.host?.lowercase() ?: ""
+        if (scheme != "https" && scheme != "http") {
+            throw IOException("Yalnızca HTTPS bağlantıları desteklenir.")
+        }
+        val isYouTubeHost = host == "youtube.com" ||
+            host.endsWith(".youtube.com") ||
+            host == "youtu.be" ||
+            host.endsWith(".youtu.be")
+        if (!isYouTubeHost) {
+            throw IOException("Güvenlik nedeniyle yalnızca resmi YouTube bağlantıları kabul edilir.")
+        }
+        return if (scheme == "http") "https://" + trimmed.removePrefix("http://") else trimmed
+    }
+
     private fun resolveExistingFile(filePathOrUrl: String?, filename: String?): File? {
         if (!filePathOrUrl.isNullOrBlank()) {
-            val clean = filePathOrUrl.removePrefix("file://")
+            val clean = filePathOrUrl.removePrefix("file://").trim()
             val direct = File(clean)
-            if (direct.exists()) return direct
+            if (isSafeMediaFile(direct)) return direct
         }
         if (!filename.isNullOrBlank()) {
-            val inStorage = File(getStorageDir(), filename)
-            if (inStorage.exists()) return inStorage
-            val inPublicDownloads = File(
-                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
-                "MediaToolkit/$filename"
-            )
-            if (inPublicDownloads.exists()) return inPublicDownloads
+            // Path traversal (../) saldırılarını önlemek için yalnızca saf dosya adını al
+            val safeName = File(filename.trim()).name
+            if (safeName.isNotEmpty() && safeName != "." && safeName != "..") {
+                val inStorage = File(getStorageDir(), safeName)
+                if (isSafeMediaFile(inStorage)) return inStorage
+                val inPublicDownloads = File(
+                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+                    "MediaToolkit/$safeName"
+                )
+                if (isSafeMediaFile(inPublicDownloads)) return inPublicDownloads
+            }
         }
         return null
     }
@@ -361,28 +430,32 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
 
                 val candidates = mutableSetOf<File>()
                 if (filePathOrUrl.isNotBlank()) {
-                    candidates.add(File(filePathOrUrl.removePrefix("file://")))
+                    candidates.add(File(filePathOrUrl.removePrefix("file://").trim()))
                 }
                 if (filename.isNotBlank()) {
-                    candidates.add(File(getStorageDir(), filename))
-                    candidates.add(
-                        File(
-                            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
-                            "MediaToolkit/$filename"
+                    val safeName = File(filename.trim()).name
+                    if (safeName.isNotEmpty() && safeName != "." && safeName != "..") {
+                        candidates.add(File(getStorageDir(), safeName))
+                        candidates.add(
+                            File(
+                                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+                                "MediaToolkit/$safeName"
+                            )
                         )
-                    )
-                    val extFiles = reactContext.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
-                    if (extFiles != null) {
-                        candidates.add(File(extFiles, "MediaToolkit/$filename"))
+                        val extFiles = reactContext.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+                        if (extFiles != null) {
+                            candidates.add(File(extFiles, "MediaToolkit/$safeName"))
+                        }
+                        candidates.add(File(reactContext.filesDir, "MediaToolkit/$safeName"))
                     }
-                    candidates.add(File(reactContext.filesDir, "MediaToolkit/$filename"))
                 }
 
                 val deletedPaths = mutableListOf<String>()
                 for (f in candidates) {
                     try {
-                        if (f.exists()) {
-                            val abs = f.absolutePath
+                        // Yalnızca MediaToolkit dizini altındaki doğrulanmış medya dosyalarını sil
+                        if (isSafeMediaFile(f)) {
+                            val abs = f.canonicalPath
                             if (f.delete()) {
                                 deletedPaths.add(abs)
                             }
@@ -1367,9 +1440,10 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
         executor.execute {
             var tempRaw: File? = null
             try {
+                val safeUrl = requireSafeYouTubeUrl(url)
                 MusicPlayerService.reactContextRef = reactContext
                 ensureInit()
-                val info = StreamInfo.getInfo(url)
+                val info = StreamInfo.getInfo(safeUrl)
 
                 // Önizlemenin çok hızlı açılması için önce standart (düşük boyutlu M4A) akışı seç
                 val audioStream = selectBestAudioStream(info.audioStreams, "128")
@@ -1602,8 +1676,9 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
     fun getPlaylistInfo(url: String, promise: Promise) {
         executor.execute {
             try {
+                val safeUrl = requireSafeYouTubeUrl(url)
                 ensureInit()
-                val playlistInfo = PlaylistInfo.getInfo(ServiceList.YouTube, url)
+                val playlistInfo = PlaylistInfo.getInfo(ServiceList.YouTube, safeUrl)
                 val items = playlistInfo.relatedItems
                     .filterIsInstance<StreamInfoItem>()
                     .filter { !it.url.isNullOrBlank() }
@@ -1891,8 +1966,9 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
     fun getVideoInfo(url: String, promise: Promise) {
         executor.execute {
             try {
+                val safeUrl = requireSafeYouTubeUrl(url)
                 ensureInit()
-                val info = StreamInfo.getInfo(url)
+                val info = StreamInfo.getInfo(safeUrl)
                 val bestThumb = info.thumbnails
                     .maxByOrNull { it.height }?.url
                     ?: info.thumbnails.lastOrNull()?.url
@@ -2343,10 +2419,11 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
         executor.execute {
             val tempFiles = mutableListOf<File>()
             try {
+                val safeUrl = requireSafeYouTubeUrl(url)
                 ensureInit()
                 emitProgress(2.0, 0.0, "Akış çözümleniyor...")
 
-                val info = StreamInfo.getInfo(url)
+                val info = StreamInfo.getInfo(safeUrl)
                 val downloadDir = getStorageDir()
                 val safeTitle = sanitizeFileName(info.name ?: "YouTube_Medya")
 

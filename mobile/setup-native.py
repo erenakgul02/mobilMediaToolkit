@@ -102,25 +102,27 @@ def setup_native():
         if app_tag_match:
             attrs = app_tag_match.group(1)
             new_attrs = attrs
-            if 'android:usesCleartextTraffic=' not in new_attrs:
-                new_attrs += ' android:usesCleartextTraffic="true"'
+            if 'android:usesCleartextTraffic=' in new_attrs:
+                new_attrs = re.sub(r'android:usesCleartextTraffic="[^"]*"', 'android:usesCleartextTraffic="false"', new_attrs)
+            else:
+                new_attrs += ' android:usesCleartextTraffic="false"'
             if 'android:requestLegacyExternalStorage=' not in new_attrs:
                 new_attrs += ' android:requestLegacyExternalStorage="true"'
 
             manifest = manifest[:app_tag_match.start(1)] + new_attrs + manifest[app_tag_match.end(1):]
 
-        # Create res/xml/mediatoolkit_file_paths.xml so FileProvider can access Download/MediaToolkit
+        # Create res/xml/mediatoolkit_file_paths.xml restricted strictly to MediaToolkit & Ringtones directories (no <root-path>)
         xml_dir = os.path.join(ANDROID_DIR, "app", "src", "main", "res", "xml")
         os.makedirs(xml_dir, exist_ok=True)
         file_paths_xml = os.path.join(xml_dir, "mediatoolkit_file_paths.xml")
         with open(file_paths_xml, "w", encoding="utf-8") as xf:
             xf.write("""<?xml version="1.0" encoding="utf-8"?>
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
-    <external-path name="external_files" path="." />
+    <external-path name="mediatoolkit_downloads" path="Download/MediaToolkit" />
+    <external-path name="mediatoolkit_ringtones" path="Ringtones" />
     <external-files-path name="app_external_files" path="." />
-    <files-path name="internal_files" path="." />
+    <files-path name="internal_files" path="MediaToolkit" />
     <cache-path name="cache_files" path="." />
-    <root-path name="root" path="." />
 </paths>
 """)
 
