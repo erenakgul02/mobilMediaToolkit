@@ -29,7 +29,27 @@ import {
   downloadFileToDevice,
   getThemeMode,
   setThemeMode,
+  toggleShuffleAudio,
+  cycleRepeatModeAudio,
+  setSleepTimerAudio,
+  setPlaybackSpeedAudio,
+  setAudioPresetAudio,
 } from './src/services/api';
+
+const SPEED_OPTIONS = [0.75, 1.0, 1.25, 1.5];
+const AUDIO_PRESET_OPTIONS = [
+  { id: 'NORMAL', label: 'Normal' },
+  { id: 'BASS', label: 'Bas+' },
+  { id: 'VOCAL', label: 'Vokal' },
+  { id: 'LOUD', label: 'Yüksek Ses' },
+];
+const SLEEP_TIMER_OPTIONS = [
+  { id: 'off', label: 'Kapalı', mins: 0, trackEnd: false },
+  { id: '15', label: '15 dk', mins: 15, trackEnd: false },
+  { id: '30', label: '30 dk', mins: 30, trackEnd: false },
+  { id: '60', label: '60 dk', mins: 60, trackEnd: false },
+  { id: 'end', label: 'Şarkı Sonu', mins: 0, trackEnd: true },
+];
 
 function formatMs(ms) {
   const totalSec = Math.max(0, Math.floor((Number(ms) || 0) / 1000));
@@ -42,6 +62,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('downloader');
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [expandedPlayerVisible, setExpandedPlayerVisible] = useState(false);
+  const [activePlayerPanel, setActivePlayerPanel] = useState(null); // 'sleep' | 'fx' | null
   const [seekBarWidth, setSeekBarWidth] = useState(1);
 
   const [playerState, setPlayerState] = useState({
@@ -51,6 +72,12 @@ export default function App() {
     playlistCount: 0,
     positionMs: 0,
     durationMs: 0,
+    shuffleEnabled: false,
+    repeatMode: 'OFF',
+    playbackSpeed: 1.0,
+    audioPreset: 'NORMAL',
+    sleepStopAtEndOfTrack: false,
+    sleepTimerRemainingSec: 0,
     id: '',
     title: '',
     uploader: '',
@@ -519,6 +546,273 @@ export default function App() {
               </View>
             </View>
 
+            {/* Gelişmiş Mod Çubuğu: Karışık Çal | Tekrarla | Uyku Zamanlayıcısı | Hız & Ses Efekti */}
+            <View style={styles.advancedToolsSection}>
+              <View style={styles.advancedQuickRow}>
+                {/* Karışık Çal (Shuffle) */}
+                <TouchableOpacity
+                  style={[
+                    styles.advPillBtn,
+                    playerState.shuffleEnabled && styles.advPillBtnActive,
+                  ]}
+                  onPress={() => toggleShuffleAudio()}
+                >
+                  <Ionicons
+                    name="shuffle"
+                    size={15}
+                    color={playerState.shuffleEnabled ? '#FFFFFF' : '#A5B4FC'}
+                  />
+                  <Text
+                    style={[
+                      styles.advPillText,
+                      playerState.shuffleEnabled && styles.advPillTextActive,
+                    ]}
+                  >
+                    Karışık
+                  </Text>
+                </TouchableOpacity>
+
+                {/* Tekrarla (Repeat: OFF -> ALL -> ONE) */}
+                <TouchableOpacity
+                  style={[
+                    styles.advPillBtn,
+                    playerState.repeatMode &&
+                      playerState.repeatMode !== 'OFF' &&
+                      styles.advPillBtnActive,
+                  ]}
+                  onPress={() => cycleRepeatModeAudio()}
+                >
+                  <Ionicons
+                    name="repeat"
+                    size={15}
+                    color={
+                      playerState.repeatMode && playerState.repeatMode !== 'OFF'
+                        ? '#FFFFFF'
+                        : '#A5B4FC'
+                    }
+                  />
+                  <Text
+                    style={[
+                      styles.advPillText,
+                      playerState.repeatMode &&
+                        playerState.repeatMode !== 'OFF' &&
+                        styles.advPillTextActive,
+                    ]}
+                  >
+                    {playerState.repeatMode === 'ONE'
+                      ? 'Tek Şarkı'
+                      : playerState.repeatMode === 'ALL'
+                      ? 'Tüm Liste'
+                      : 'Tekrar Yok'}
+                  </Text>
+                </TouchableOpacity>
+
+                {/* Uyku Zamanlayıcısı (Sleep Timer) */}
+                <TouchableOpacity
+                  style={[
+                    styles.advPillBtn,
+                    (playerState.sleepStopAtEndOfTrack ||
+                      playerState.sleepTimerRemainingSec > 0 ||
+                      activePlayerPanel === 'sleep') &&
+                      styles.advPillBtnActive,
+                  ]}
+                  onPress={() =>
+                    setActivePlayerPanel((prev) =>
+                      prev === 'sleep' ? null : 'sleep'
+                    )
+                  }
+                >
+                  <Ionicons
+                    name="moon-outline"
+                    size={14}
+                    color={
+                      playerState.sleepStopAtEndOfTrack ||
+                      playerState.sleepTimerRemainingSec > 0 ||
+                      activePlayerPanel === 'sleep'
+                        ? '#FFFFFF'
+                        : '#A5B4FC'
+                    }
+                  />
+                  <Text
+                    style={[
+                      styles.advPillText,
+                      (playerState.sleepStopAtEndOfTrack ||
+                        playerState.sleepTimerRemainingSec > 0 ||
+                        activePlayerPanel === 'sleep') &&
+                        styles.advPillTextActive,
+                    ]}
+                  >
+                    {playerState.sleepStopAtEndOfTrack
+                      ? 'Şarkı Sonu'
+                      : playerState.sleepTimerRemainingSec > 0
+                      ? formatMs(playerState.sleepTimerRemainingSec * 1000)
+                      : 'Uyku'}
+                  </Text>
+                </TouchableOpacity>
+
+                {/* Oynatma Hızı & Bas Güçlendirici (Equalizer) */}
+                <TouchableOpacity
+                  style={[
+                    styles.advPillBtn,
+                    ((playerState.playbackSpeed &&
+                      Math.abs(playerState.playbackSpeed - 1.0) > 0.05) ||
+                      (playerState.audioPreset &&
+                        playerState.audioPreset !== 'NORMAL') ||
+                      activePlayerPanel === 'fx') &&
+                      styles.advPillBtnActive,
+                  ]}
+                  onPress={() =>
+                    setActivePlayerPanel((prev) =>
+                      prev === 'fx' ? null : 'fx'
+                    )
+                  }
+                >
+                  <Ionicons
+                    name="options-outline"
+                    size={15}
+                    color={
+                      (playerState.playbackSpeed &&
+                        Math.abs(playerState.playbackSpeed - 1.0) > 0.05) ||
+                      (playerState.audioPreset &&
+                        playerState.audioPreset !== 'NORMAL') ||
+                      activePlayerPanel === 'fx'
+                        ? '#FFFFFF'
+                        : '#A5B4FC'
+                    }
+                  />
+                  <Text
+                    style={[
+                      styles.advPillText,
+                      ((playerState.playbackSpeed &&
+                        Math.abs(playerState.playbackSpeed - 1.0) > 0.05) ||
+                        (playerState.audioPreset &&
+                          playerState.audioPreset !== 'NORMAL') ||
+                        activePlayerPanel === 'fx') &&
+                        styles.advPillTextActive,
+                    ]}
+                  >
+                    {`${Number(playerState.playbackSpeed || 1).toFixed(
+                      playerState.playbackSpeed === 0.75 ||
+                        playerState.playbackSpeed === 1.25
+                        ? 2
+                        : 1
+                    )}x • ${
+                      playerState.audioPreset === 'BASS'
+                        ? 'Bas+'
+                        : playerState.audioPreset === 'VOCAL'
+                        ? 'Vokal'
+                        : playerState.audioPreset === 'LOUD'
+                        ? 'Yüksek'
+                        : 'EQ'
+                    }`}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Açılır Uyku Zamanlayıcısı Seçenekleri */}
+              {activePlayerPanel === 'sleep' && (
+                <View style={styles.subControlDrawer}>
+                  <Text style={styles.subControlTitle}>
+                    Uyku Zamanlayıcısı (Otomatik Kapatma)
+                  </Text>
+                  <View style={styles.subControlChipsRow}>
+                    {SLEEP_TIMER_OPTIONS.map((opt) => {
+                      const isSelected =
+                        (opt.id === 'off' &&
+                          !playerState.sleepStopAtEndOfTrack &&
+                          !(playerState.sleepTimerRemainingSec > 0)) ||
+                        (opt.id === 'end' &&
+                          playerState.sleepStopAtEndOfTrack);
+                      return (
+                        <TouchableOpacity
+                          key={opt.id}
+                          style={[
+                            styles.subChip,
+                            isSelected && styles.subChipSelected,
+                          ]}
+                          onPress={() => {
+                            setSleepTimerAudio(opt.mins, opt.trackEnd);
+                            setActivePlayerPanel(null);
+                          }}
+                        >
+                          <Text
+                            style={[
+                              styles.subChipText,
+                              isSelected && styles.subChipTextSelected,
+                            ]}
+                          >
+                            {opt.label}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </View>
+              )}
+
+              {/* Açılır Hız ve Ses Efekti (Bas Güçlendirici / Equalizer) Seçenekleri */}
+              {activePlayerPanel === 'fx' && (
+                <View style={styles.subControlDrawer}>
+                  <Text style={styles.subControlTitle}>Oynatma Hızı</Text>
+                  <View style={styles.subControlChipsRow}>
+                    {SPEED_OPTIONS.map((spd) => {
+                      const isSelected =
+                        Math.abs((playerState.playbackSpeed || 1.0) - spd) <
+                        0.05;
+                      return (
+                        <TouchableOpacity
+                          key={String(spd)}
+                          style={[
+                            styles.subChip,
+                            isSelected && styles.subChipSelected,
+                          ]}
+                          onPress={() => setPlaybackSpeedAudio(spd)}
+                        >
+                          <Text
+                            style={[
+                              styles.subChipText,
+                              isSelected && styles.subChipTextSelected,
+                            ]}
+                          >
+                            {spd}x
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+
+                  <Text style={[styles.subControlTitle, { marginTop: 8 }]}>
+                    Ses Profili (Equalizer & Bas Güçlendirici)
+                  </Text>
+                  <View style={styles.subControlChipsRow}>
+                    {AUDIO_PRESET_OPTIONS.map((pr) => {
+                      const isSelected =
+                        (playerState.audioPreset || 'NORMAL') === pr.id;
+                      return (
+                        <TouchableOpacity
+                          key={pr.id}
+                          style={[
+                            styles.subChip,
+                            isSelected && styles.subChipSelected,
+                          ]}
+                          onPress={() => setAudioPresetAudio(pr.id)}
+                        >
+                          <Text
+                            style={[
+                              styles.subChipText,
+                              isSelected && styles.subChipTextSelected,
+                            ]}
+                          >
+                            {pr.label}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </View>
+              )}
+            </View>
+
             {/* Alt Büyük Oynatma Kontrolleri */}
             <View style={styles.expandedControlsRow}>
               <TouchableOpacity
@@ -974,6 +1268,80 @@ const styles = StyleSheet.create({
     color: '#94A3B8',
     fontSize: 12,
     fontWeight: '700',
+  },
+  advancedToolsSection: {
+    width: '100%',
+  },
+  advancedQuickRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 6,
+  },
+  advPillBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    paddingVertical: 7,
+    paddingHorizontal: 4,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.07)',
+    borderWidth: 1,
+    borderColor: 'rgba(165, 180, 252, 0.2)',
+  },
+  advPillBtnActive: {
+    backgroundColor: '#4F46E5',
+    borderColor: '#6366F1',
+  },
+  advPillText: {
+    color: '#CBD5E1',
+    fontSize: 10.5,
+    fontWeight: '700',
+  },
+  advPillTextActive: {
+    color: '#FFFFFF',
+  },
+  subControlDrawer: {
+    marginTop: 8,
+    padding: 10,
+    borderRadius: 12,
+    backgroundColor: 'rgba(9, 13, 22, 0.65)',
+    borderWidth: 1,
+    borderColor: '#312E81',
+  },
+  subControlTitle: {
+    color: '#A5B4FC',
+    fontSize: 11,
+    fontWeight: '700',
+    marginBottom: 6,
+  },
+  subControlChipsRow: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  subChip: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+  },
+  subChipSelected: {
+    backgroundColor: '#4F46E5',
+    borderColor: '#818CF8',
+  },
+  subChipText: {
+    color: '#E2E8F0',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  subChipTextSelected: {
+    color: '#FFFFFF',
   },
   expandedControlsRow: {
     flexDirection: 'row',

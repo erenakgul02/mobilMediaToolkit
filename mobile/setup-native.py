@@ -86,6 +86,9 @@ def setup_native():
             "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
             "android.permission.WAKE_LOCK",
             "android.permission.POST_NOTIFICATIONS",
+            "android.permission.ACCESS_NETWORK_STATE",
+            "android.permission.MODIFY_AUDIO_SETTINGS",
+            "android.permission.WRITE_SETTINGS",
         ]
         for perm in required_perms:
             if perm not in manifest:

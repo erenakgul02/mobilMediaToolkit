@@ -19,15 +19,22 @@ import android.media.MediaExtractor
 import android.media.MediaFormat as AndroidMediaFormat
 import android.media.MediaMuxer
 import android.media.MediaScannerConnection
+import android.media.RingtoneManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
+import android.os.StatFs
+import android.provider.Settings
 import android.text.TextUtils
 import android.util.Log
 import android.util.TypedValue
+import android.view.GestureDetector
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.Window
@@ -56,6 +63,7 @@ import org.schabi.newpipe.extractor.downloader.Response
 import org.schabi.newpipe.extractor.exceptions.ReCaptchaException
 import org.schabi.newpipe.extractor.localization.ContentCountry
 import org.schabi.newpipe.extractor.localization.Localization
+import org.schabi.newpipe.extractor.playlist.PlaylistInfo
 import org.schabi.newpipe.extractor.search.SearchInfo
 import org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper
 import org.schabi.newpipe.extractor.services.youtube.linkHandler.YoutubeSearchQueryHandlerFactory
@@ -1073,18 +1081,90 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
                     }
                 }
 
-                // Ekrana dokununca kontrolleri yumuşak geçişle gizle/göster + tam ekranı koru
-                videoContainer.setOnClickListener {
-                    controlsVisible = !controlsVisible
-                    if (controlsVisible) {
-                        overlayContainer.visibility = View.VISIBLE
-                        overlayContainer.animate().alpha(1f).setDuration(180L).start()
-                    } else {
-                        overlayContainer.animate().alpha(0f).setDuration(180L).withEndAction {
-                            if (!controlsVisible) overlayContainer.visibility = View.GONE
-                        }.start()
+                // Çift tıklama geri/ileri sarma (-10s / +10s) görsel bildirimi
+                val doubleTapFeedbackTv = TextView(activity).apply {
+                    text = "+10 sn"
+                    setTextColor(Color.WHITE)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                    typeface = Typeface.DEFAULT_BOLD
+                    setPadding(dpToPx(18), dpToPx(10), dpToPx(18), dpToPx(10))
+                    background = GradientDrawable().apply {
+                        setColor(Color.parseColor("#B30F172A"))
+                        cornerRadius = dpToPx(20).toFloat()
+                        setStroke(dpToPx(1), Color.parseColor("#4DFFFFFF"))
                     }
-                    applyImmersiveFullscreen(dialog.window)
+                    visibility = View.GONE
+                    alpha = 0f
+                }
+                rootLayout.addView(doubleTapFeedbackTv)
+
+                fun showDoubleTapSkipBadge(isForward: Boolean) {
+                    doubleTapFeedbackTv.text = if (isForward) "+10 sn >>" else "<< -10 sn"
+                    val lp = FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        (if (isForward) Gravity.END else Gravity.START) or Gravity.CENTER_VERTICAL
+                    ).apply {
+                        marginStart = dpToPx(36)
+                        marginEnd = dpToPx(36)
+                    }
+                    doubleTapFeedbackTv.layoutParams = lp
+                    doubleTapFeedbackTv.visibility = View.VISIBLE
+                    doubleTapFeedbackTv.animate().cancel()
+                    doubleTapFeedbackTv.alpha = 1f
+                    doubleTapFeedbackTv.animate()
+                        .alpha(0f)
+                        .setStartDelay(420L)
+                        .setDuration(220L)
+                        .withEndAction {
+                            doubleTapFeedbackTv.visibility = View.GONE
+                        }
+                        .start()
+                }
+
+                // Ekrana tek dokununca kontrolleri gizle/göster, çift dokununca sol (-10s) / sağ (+10s) sar
+                val gestureDetector = GestureDetector(
+                    activity,
+                    object : GestureDetector.SimpleOnGestureListener() {
+                        override fun onDown(e: MotionEvent): Boolean = true
+
+                        override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                            controlsVisible = !controlsVisible
+                            if (controlsVisible) {
+                                overlayContainer.visibility = View.VISIBLE
+                                overlayContainer.animate().alpha(1f).setDuration(180L).start()
+                            } else {
+                                overlayContainer.animate().alpha(0f).setDuration(180L).withEndAction {
+                                    if (!controlsVisible) overlayContainer.visibility = View.GONE
+                                }.start()
+                            }
+                            applyImmersiveFullscreen(dialog.window)
+                            return true
+                        }
+
+                        override fun onDoubleTap(e: MotionEvent): Boolean {
+                            val totalW = videoContainer.width.coerceAtLeast(1)
+                            val isRightSide = e.x >= totalW / 2f
+                            if (isRightSide) {
+                                val maxPos = if (durationMs > 0) durationMs else Int.MAX_VALUE
+                                val target = (videoView.currentPosition + 10000).coerceAtMost(maxPos)
+                                videoView.seekTo(target)
+                                currentTimeTv.text = formatTimeMs(target)
+                                showDoubleTapSkipBadge(true)
+                            } else {
+                                val target = (videoView.currentPosition - 10000).coerceAtLeast(0)
+                                videoView.seekTo(target)
+                                currentTimeTv.text = formatTimeMs(target)
+                                showDoubleTapSkipBadge(false)
+                            }
+                            applyImmersiveFullscreen(dialog.window)
+                            return true
+                        }
+                    }
+                )
+
+                videoContainer.setOnTouchListener { _, event ->
+                    gestureDetector.onTouchEvent(event)
                 }
 
                 val ticker = object : Runnable {
@@ -1413,6 +1493,290 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
             promise.resolve(MusicPlayerService.getCurrentStateMap())
         } catch (e: Exception) {
             promise.reject("PLAYER_ERROR", e.localizedMessage, e)
+        }
+    }
+
+    @ReactMethod
+    fun toggleShuffle(promise: Promise) {
+        try {
+            val enabled = MusicPlayerService.toggleShuffleMode()
+            promise.resolve(enabled)
+        } catch (e: Exception) {
+            promise.reject("PLAYER_ERROR", e.localizedMessage, e)
+        }
+    }
+
+    @ReactMethod
+    fun cycleRepeatMode(promise: Promise) {
+        try {
+            val mode = MusicPlayerService.cycleRepeatModeState()
+            promise.resolve(mode)
+        } catch (e: Exception) {
+            promise.reject("PLAYER_ERROR", e.localizedMessage, e)
+        }
+    }
+
+    @ReactMethod
+    fun setSleepTimer(minutes: Int, stopAtTrackEnd: Boolean, promise: Promise) {
+        try {
+            MusicPlayerService.setSleepTimerState(minutes, stopAtTrackEnd)
+            promise.resolve(true)
+        } catch (e: Exception) {
+            promise.reject("PLAYER_ERROR", e.localizedMessage, e)
+        }
+    }
+
+    @ReactMethod
+    fun setPlaybackSpeed(speed: Double, promise: Promise) {
+        try {
+            MusicPlayerService.setPlaybackSpeedState(speed.toFloat())
+            promise.resolve(true)
+        } catch (e: Exception) {
+            promise.reject("PLAYER_ERROR", e.localizedMessage, e)
+        }
+    }
+
+    @ReactMethod
+    fun setAudioPreset(preset: String, promise: Promise) {
+        try {
+            MusicPlayerService.setAudioPresetState(preset)
+            promise.resolve(true)
+        } catch (e: Exception) {
+            promise.reject("PLAYER_ERROR", e.localizedMessage, e)
+        }
+    }
+
+    @ReactMethod
+    fun getStorageStats(promise: Promise) {
+        executor.execute {
+            try {
+                val path = Environment.getExternalStorageDirectory() ?: reactContext.filesDir
+                val stat = StatFs(path.absolutePath)
+                val freeBytes = stat.availableBlocksLong * stat.blockSizeLong
+                val totalBytes = stat.blockCountLong * stat.blockSizeLong
+                val freeGb = freeBytes.toDouble() / (1024.0 * 1024.0 * 1024.0)
+                val totalGb = totalBytes.toDouble() / (1024.0 * 1024.0 * 1024.0)
+                val map = Arguments.createMap().apply {
+                    putDouble("freeBytes", freeBytes.toDouble())
+                    putDouble("totalBytes", totalBytes.toDouble())
+                    putString("freeGbFormatted", String.format("%.1f GB", freeGb))
+                    putString("totalGbFormatted", String.format("%.1f GB", totalGb))
+                }
+                promise.resolve(map)
+            } catch (e: Exception) {
+                promise.reject("STORAGE_ERROR", e.localizedMessage ?: "Depolama bilgisi alınamadı", e)
+            }
+        }
+    }
+
+    @ReactMethod
+    fun isWifiConnected(promise: Promise) {
+        try {
+            val cm = reactContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            if (cm == null) {
+                promise.resolve(true)
+                return
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                val network = cm.activeNetwork
+                val caps = if (network != null) cm.getNetworkCapabilities(network) else null
+                val onWifiOrEthernet = caps != null && (
+                    caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+                        caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
+                    )
+                promise.resolve(onWifiOrEthernet)
+            } else {
+                @Suppress("DEPRECATION")
+                val info = cm.activeNetworkInfo
+                @Suppress("DEPRECATION")
+                val onWifi = info != null && info.isConnected &&
+                    (info.type == ConnectivityManager.TYPE_WIFI || info.type == ConnectivityManager.TYPE_ETHERNET)
+                promise.resolve(onWifi)
+            }
+        } catch (e: Exception) {
+            promise.resolve(true)
+        }
+    }
+
+    @ReactMethod
+    fun getPlaylistInfo(url: String, promise: Promise) {
+        executor.execute {
+            try {
+                ensureInit()
+                val playlistInfo = PlaylistInfo.getInfo(ServiceList.YouTube, url)
+                val items = playlistInfo.relatedItems
+                    .filterIsInstance<StreamInfoItem>()
+                    .filter { !it.url.isNullOrBlank() }
+
+                val itemsArray = Arguments.createArray()
+                for (item in items) {
+                    val thumb = item.thumbnails.maxByOrNull { it.height }?.url
+                        ?: item.thumbnails.lastOrNull()?.url
+                        ?: ""
+                    val itemMap = Arguments.createMap().apply {
+                        putString("title", item.name ?: "YouTube Medya")
+                        putString("url", item.url ?: "")
+                        putString("thumbnail", thumb)
+                        putString("uploader", item.uploaderName ?: playlistInfo.uploaderName ?: "YouTube")
+                        putInt("duration", item.duration.toInt().coerceAtLeast(0))
+                    }
+                    itemsArray.pushMap(itemMap)
+                }
+
+                val bestPlaylistThumb = playlistInfo.thumbnails.maxByOrNull { it.height }?.url
+                    ?: playlistInfo.thumbnails.lastOrNull()?.url
+                    ?: ""
+
+                val result = Arguments.createMap().apply {
+                    putString("title", playlistInfo.name ?: "YouTube Çalma Listesi")
+                    putString("uploader", playlistInfo.uploaderName ?: "YouTube")
+                    putString("thumbnail", bestPlaylistThumb)
+                    putInt("itemCount", items.size)
+                    putArray("items", itemsArray)
+                }
+                promise.resolve(result)
+            } catch (e: Exception) {
+                Log.e(TAG, "getPlaylistInfo hatası", e)
+                promise.reject("PLAYLIST_ERROR", e.localizedMessage ?: "YouTube oynatma listesi bilgileri alınamadı", e)
+            }
+        }
+    }
+
+    @ReactMethod
+    fun trimAudioFile(
+        filePathOrUrl: String,
+        filename: String,
+        startSec: Double,
+        endSec: Double,
+        setAsRingtone: Boolean,
+        promise: Promise
+    ) {
+        executor.execute {
+            val extractor = MediaExtractor()
+            var muxer: MediaMuxer? = null
+            try {
+                val sourceFile = resolveExistingFile(filePathOrUrl, filename)
+                    ?: throw IOException("Kırpılacak ses dosyası cihazda bulunamadı.")
+
+                val startUs = (startSec.coerceAtLeast(0.0) * 1_000_000.0).toLong()
+                val endUs = (endSec * 1_000_000.0).toLong()
+                if (endUs <= startUs + 1_000_000L) {
+                    throw IOException("Bitiş süresi başlangıç süresinden en az 1 saniye büyük olmalıdır.")
+                }
+
+                extractor.setDataSource(sourceFile.absolutePath)
+                val audioTrackIdx = selectTrackByPrefix(extractor, "audio/")
+                if (audioTrackIdx < 0) {
+                    throw IOException("Ses izi bulunamadı.")
+                }
+                extractor.selectTrack(audioTrackIdx)
+                val trackFormat = extractor.getTrackFormat(audioTrackIdx)
+
+                val baseName = sanitizeFileName(sourceFile.nameWithoutExtension)
+                val outName = "${baseName}_Kesit_${startSec.toInt()}s_${endSec.toInt()}s.m4a"
+                val outFile = File(getStorageDir(), outName)
+                if (outFile.exists()) outFile.delete()
+
+                muxer = MediaMuxer(outFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+                val dstTrack = muxer.addTrack(trackFormat)
+                muxer.start()
+
+                extractor.seekTo(startUs, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
+
+                val buffer = ByteBuffer.allocateDirect(512 * 1024)
+                val bufferInfo = MediaCodec.BufferInfo()
+                var firstPtsUs = -1L
+
+                while (true) {
+                    val sampleSize = extractor.readSampleData(buffer, 0)
+                    if (sampleSize < 0) break
+                    val sampleTimeUs = extractor.sampleTime
+                    if (sampleTimeUs < 0L || sampleTimeUs > endUs) break
+
+                    if (sampleTimeUs >= startUs) {
+                        if (firstPtsUs < 0L) {
+                            firstPtsUs = sampleTimeUs
+                        }
+                        bufferInfo.offset = 0
+                        bufferInfo.size = sampleSize
+                        bufferInfo.presentationTimeUs = (sampleTimeUs - firstPtsUs).coerceAtLeast(0L)
+                        val sFlags = extractor.sampleFlags
+                        bufferInfo.flags = if ((sFlags and MediaExtractor.SAMPLE_FLAG_SYNC) != 0) {
+                            MediaCodec.BUFFER_FLAG_KEY_FRAME
+                        } else 0
+                        muxer.writeSampleData(dstTrack, buffer, bufferInfo)
+                    }
+                    extractor.advance()
+                }
+
+                muxer.stop()
+
+                if (!outFile.exists() || outFile.length() == 0L) {
+                    throw IOException("Seçilen zaman aralığında ses verisi kesilemedi.")
+                }
+
+                try {
+                    MediaScannerConnection.scanFile(
+                        reactContext.applicationContext,
+                        arrayOf(outFile.absolutePath),
+                        arrayOf("audio/mp4"),
+                        null
+                    )
+                } catch (_: Exception) {}
+
+                var ringtoneSuccess = false
+                var needsPermission = false
+
+                if (setAsRingtone) {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.System.canWrite(reactContext)) {
+                        needsPermission = true
+                        try {
+                            val permIntent = Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS).apply {
+                                data = Uri.parse("package:${reactContext.packageName}")
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            }
+                            reactContext.startActivity(permIntent)
+                        } catch (_: Exception) {}
+                    } else {
+                        try {
+                            val ringtonesDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_RINGTONES)
+                            if (!ringtonesDir.exists()) ringtonesDir.mkdirs()
+                            val ringtoneFile = File(ringtonesDir, outFile.name)
+                            outFile.copyTo(ringtoneFile, overwrite = true)
+
+                            val uri = getFileProviderUri(ringtoneFile)
+                            RingtoneManager.setActualDefaultRingtoneUri(
+                                reactContext,
+                                RingtoneManager.TYPE_RINGTONE,
+                                uri
+                            )
+                            ringtoneSuccess = true
+                        } catch (ringErr: Exception) {
+                            Log.w(TAG, "Zil sesi atama uyarısı: ${ringErr.message}")
+                        }
+                    }
+                }
+
+                val map = Arguments.createMap().apply {
+                    putBoolean("success", true)
+                    putString("fileName", outFile.name)
+                    putString("filePath", outFile.absolutePath)
+                    putString("fileSize", formatFileSize(outFile.length()))
+                    putBoolean("ringtoneSet", ringtoneSuccess)
+                    putBoolean("needsWriteSettingsPermission", needsPermission)
+                }
+                promise.resolve(map)
+            } catch (e: Exception) {
+                Log.e(TAG, "trimAudioFile hatası", e)
+                promise.reject("TRIM_ERROR", e.localizedMessage ?: "Ses dosyası kırpılamadı", e)
+            } finally {
+                try {
+                    extractor.release()
+                } catch (_: Exception) {}
+                try {
+                    muxer?.release()
+                } catch (_: Exception) {}
+            }
         }
     }
 

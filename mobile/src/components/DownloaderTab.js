@@ -17,7 +17,11 @@ import {
   DOWNLOAD_PRESETS,
   getDefaultDownloadPreset,
   setDefaultDownloadPreset,
+  getWifiOnlyMode,
+  setWifiOnlyMode,
   fetchVideoInfo,
+  fetchYouTubePlaylistInfo,
+  isYouTubePlaylistUrl,
   searchYouTubeVideos,
   isLikelyYouTubeUrl,
   startDownload,
@@ -39,13 +43,15 @@ export default function DownloaderTab({
   const [loadingInfo, setLoadingInfo] = useState(false);
   const [quickLinkDownloading, setQuickLinkDownloading] = useState(false);
   const [searchResults, setSearchResults] = useState([]);
+  const [playlistInfo, setPlaylistInfo] = useState(null);
   const [videoInfo, setVideoInfo] = useState(null);
   const [selectedVideoUrl, setSelectedVideoUrl] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
 
-  // Kalıcı Otomatik İndirme Tercihi (Varsayılan: M4A Yüksek Kalite)
+  // Kalıcı Otomatik İndirme Tercihi (Varsayılan: M4A Yüksek Kalite) & Yalnızca Wi-Fi
   const [activePreset, setActivePreset] = useState(DOWNLOAD_PRESETS[0]);
   const [presetMenuOpen, setPresetMenuOpen] = useState(false);
+  const [wifiOnly, setWifiOnly] = useState(false);
   const [mediaType, setMediaType] = useState('m4a');
   const [selectedQuality, setSelectedQuality] = useState('high');
 
@@ -76,6 +82,10 @@ export default function DownloaderTab({
       })
       .catch(() => {});
 
+    getWifiOnlyMode()
+      .then((enabled) => setWifiOnly(Boolean(enabled)))
+      .catch(() => {});
+
     syncQueueState();
     pollTimerRef.current = setInterval(() => {
       syncQueueState();
@@ -92,6 +102,13 @@ export default function DownloaderTab({
     setSelectedQuality(preset.quality);
     setPresetMenuOpen(false);
     await setDefaultDownloadPreset(preset.id);
+  };
+
+  const handleToggleWifiOnly = async () => {
+    const next = !wifiOnly;
+    setWifiOnly(next);
+    await setWifiOnlyMode(next);
+    syncQueueState();
   };
 
   const cleanAndSetInput = (rawText) => {
@@ -157,9 +174,14 @@ export default function DownloaderTab({
     setErrorMsg('');
     setLoadingInfo(true);
     setVideoInfo(null);
+    setPlaylistInfo(null);
 
     try {
-      if (isLikelyYouTubeUrl(input)) {
+      if (isYouTubePlaylistUrl(input)) {
+        setSearchResults([]);
+        const plData = await fetchYouTubePlaylistInfo(input);
+        setPlaylistInfo(plData);
+      } else if (isLikelyYouTubeUrl(input)) {
         setSearchResults([]);
         const info = await fetchVideoInfo(input);
         setVideoInfo({ ...info, url: input });
@@ -174,6 +196,40 @@ export default function DownloaderTab({
       setErrorMsg(err.message || 'Arama veya video analizi başarısız oldu.');
     } finally {
       setLoadingInfo(false);
+    }
+  };
+
+  // YouTube Playlist / Albüm içindeki tüm parçaları seçili otomatik formatla sıraya ekle
+  const handleQueueAllPlaylistItems = async () => {
+    if (!playlistInfo || !Array.isArray(playlistInfo.items)) return;
+    setErrorMsg('');
+    let addedCount = 0;
+    for (const item of playlistInfo.items) {
+      if (!item.url) continue;
+      const alreadyInQueue = queueState.tasks.some(
+        (t) =>
+          t.cleanUrl === item.url &&
+          (t.status === 'downloading' || t.status === 'queued')
+      );
+      if (alreadyInQueue) continue;
+      try {
+        await startDownload({
+          url: item.url,
+          type: activePreset.type,
+          quality: activePreset.quality,
+          title: item.title || 'YouTube Medya',
+          thumbnail: item.thumbnail || playlistInfo.thumbnail || '',
+          uploader: item.channel || playlistInfo.uploader || 'YouTube',
+        });
+        addedCount++;
+      } catch (_) {}
+    }
+    syncQueueState();
+    if (addedCount > 0) {
+      Alert.alert(
+        'Kuyruğa Eklendi',
+        `${addedCount} parça (${activePreset.shortLabel}) indirme sırasına eklendi.`
+      );
     }
   };
 
@@ -337,14 +393,14 @@ export default function DownloaderTab({
       showsVerticalScrollIndicator={false}
       keyboardShouldPersistTaps="handled"
     >
-      {/* ÜST AÇILIR/KAPANIR OTOMATİK İNDİRME FORMATI SEÇİCİSİ (Varsayılan: M4A Yüksek Kalite) */}
+      {/* ÜST AÇILIR/KAPANIR OTOMATİK İNDİRME FORMATI SEÇİCİSİ & WI-FI KİLİDİ */}
       <View style={[styles.presetCard, isDarkMode && styles.cardDark]}>
-        <TouchableOpacity
-          style={styles.presetHeaderRow}
-          activeOpacity={0.78}
-          onPress={() => setPresetMenuOpen((prev) => !prev)}
-        >
-          <View style={styles.presetTitleLeft}>
+        <View style={styles.presetHeaderRow}>
+          <TouchableOpacity
+            style={styles.presetTitleLeft}
+            activeOpacity={0.78}
+            onPress={() => setPresetMenuOpen((prev) => !prev)}
+          >
             <Ionicons
               name="flash"
               size={15}
@@ -353,27 +409,63 @@ export default function DownloaderTab({
             <Text style={[styles.presetHeaderTitle, isDarkMode && styles.textPrimaryDark]}>
               İndirme Şekli
             </Text>
-          </View>
+          </TouchableOpacity>
 
-          <View
-            style={[
-              styles.presetSelectedBadge,
-              activePreset.type === 'm4a'
-                ? styles.presetSelectedBadgeAudio
-                : styles.presetSelectedBadgeVideo,
-            ]}
-          >
-            <Ionicons name={activePreset.icon} size={13} color="#FFFFFF" />
-            <Text style={styles.presetSelectedBadgeText} numberOfLines={1}>
-              {activePreset.fullLabel}
-            </Text>
-            <Ionicons
-              name={presetMenuOpen ? 'chevron-up' : 'chevron-down'}
-              size={14}
-              color="#FFFFFF"
-            />
+          <View style={styles.presetHeaderRightGroup}>
+            {/* Yalnızca Wi-Fi'da İndir Kilidi */}
+            <TouchableOpacity
+              style={[
+                styles.wifiTogglePill,
+                isDarkMode && styles.wifiTogglePillDark,
+                wifiOnly && styles.wifiTogglePillActive,
+              ]}
+              activeOpacity={0.8}
+              onPress={handleToggleWifiOnly}
+            >
+              <Ionicons
+                name={wifiOnly ? 'wifi' : 'wifi-outline'}
+                size={13}
+                color={
+                  wifiOnly
+                    ? '#FFFFFF'
+                    : isDarkMode
+                    ? '#94A3B8'
+                    : '#475569'
+                }
+              />
+              <Text
+                style={[
+                  styles.wifiToggleText,
+                  isDarkMode && styles.textSecondaryDark,
+                  wifiOnly && { color: '#FFFFFF' },
+                ]}
+              >
+                Wi-Fi
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                styles.presetSelectedBadge,
+                activePreset.type === 'm4a'
+                  ? styles.presetSelectedBadgeAudio
+                  : styles.presetSelectedBadgeVideo,
+              ]}
+              activeOpacity={0.8}
+              onPress={() => setPresetMenuOpen((prev) => !prev)}
+            >
+              <Ionicons name={activePreset.icon} size={13} color="#FFFFFF" />
+              <Text style={styles.presetSelectedBadgeText} numberOfLines={1}>
+                {activePreset.fullLabel}
+              </Text>
+              <Ionicons
+                name={presetMenuOpen ? 'chevron-up' : 'chevron-down'}
+                size={14}
+                color="#FFFFFF"
+              />
+            </TouchableOpacity>
           </View>
-        </TouchableOpacity>
+        </View>
 
         {presetMenuOpen && (
           <View
@@ -499,6 +591,7 @@ export default function DownloaderTab({
                 setQueryOrUrl('');
                 setSearchResults([]);
                 setVideoInfo(null);
+                setPlaylistInfo(null);
               }}
               style={styles.clearBtn}
             >
@@ -569,6 +662,164 @@ export default function DownloaderTab({
           </View>
         ) : null}
       </View>
+
+      {/* Toplu YouTube Playlist / Albüm İndirme Kartı */}
+      {playlistInfo && (
+        <View style={[styles.card, isDarkMode && styles.cardDark]}>
+          <View style={styles.playlistBatchHeader}>
+            <View style={{ flex: 1 }}>
+              <View style={styles.searchHeaderLeft}>
+                <Ionicons name="albums-outline" size={18} color="#4F46E5" />
+                <Text
+                  style={[styles.searchResultsTitle, isDarkMode && styles.textPrimaryDark]}
+                  numberOfLines={1}
+                >
+                  {playlistInfo.title}
+                </Text>
+              </View>
+              <Text
+                style={[styles.searchResultSub, isDarkMode && styles.textSecondaryDark]}
+              >
+                {playlistInfo.uploader} • Toplam {playlistInfo.itemCount} parça
+              </Text>
+            </View>
+          </View>
+
+          <TouchableOpacity
+            style={styles.queueAllPlaylistBtn}
+            onPress={handleQueueAllPlaylistItems}
+          >
+            <Ionicons name="layers-outline" size={18} color="#FFFFFF" />
+            <Text style={styles.queueAllPlaylistBtnText}>
+              Tümünü Seçili Formatla Kuyruğa Ekle ({playlistInfo.itemCount} Parça • {activePreset.shortLabel})
+            </Text>
+          </TouchableOpacity>
+
+          <View style={[styles.searchResultsList, { marginTop: 12 }]}>
+            {playlistInfo.items.map((item) => {
+              const isPreviewLoading = previewLoadingUrl === item.url;
+              const isItemPreviewActive =
+                playerState?.isActive && playerState?.id === `preview_${item.url}`;
+              const isItemPreviewPlaying =
+                isItemPreviewActive && playerState?.isPlaying;
+              const existingQueueTask = queueState.tasks.find(
+                (t) =>
+                  t.cleanUrl === item.url &&
+                  (t.status === 'downloading' || t.status === 'queued')
+              );
+
+              return (
+                <View
+                  key={item.id}
+                  style={[
+                    styles.searchResultRow,
+                    isDarkMode && styles.searchResultRowDark,
+                  ]}
+                >
+                  <View style={styles.searchRowMainClick}>
+                    <View style={styles.searchThumbBox}>
+                      {item.thumbnail ? (
+                        <Image
+                          source={{ uri: item.thumbnail }}
+                          style={styles.searchThumbImg}
+                          resizeMode="cover"
+                        />
+                      ) : (
+                        <View style={styles.searchThumbFallback}>
+                          <Ionicons name="musical-notes" size={16} color="#FFFFFF" />
+                        </View>
+                      )}
+                      {item.duration ? (
+                        <View style={styles.durationBadge}>
+                          <Text style={styles.durationText}>{item.duration}</Text>
+                        </View>
+                      ) : null}
+                    </View>
+
+                    <View style={styles.searchResultMeta}>
+                      <Text
+                        style={[
+                          styles.searchResultItemTitle,
+                          isDarkMode && styles.textPrimaryDark,
+                        ]}
+                        numberOfLines={2}
+                      >
+                        {item.title}
+                      </Text>
+                      <Text
+                        style={[
+                          styles.searchResultSub,
+                          isDarkMode && styles.textSecondaryDark,
+                        ]}
+                        numberOfLines={1}
+                      >
+                        {item.channel}
+                      </Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.searchRowActions}>
+                    <TouchableOpacity
+                      style={[
+                        styles.previewListenBtn,
+                        isDarkMode && styles.previewListenBtnDark,
+                        isItemPreviewActive && styles.previewListenBtnActive,
+                      ]}
+                      onPress={() => handlePreviewListen(item)}
+                      disabled={isPreviewLoading}
+                    >
+                      {isPreviewLoading ? (
+                        <ActivityIndicator size="small" color="#4F46E5" />
+                      ) : (
+                        <>
+                          <Ionicons
+                            name={isItemPreviewPlaying ? 'pause' : 'headset-outline'}
+                            size={14}
+                            color={
+                              isItemPreviewActive
+                                ? '#FFFFFF'
+                                : isDarkMode
+                                ? '#A5B4FC'
+                                : '#4F46E5'
+                            }
+                          />
+                          <Text
+                            style={[
+                              styles.previewListenBtnText,
+                              isDarkMode && { color: '#A5B4FC' },
+                              isItemPreviewActive && { color: '#FFFFFF' },
+                            ]}
+                          >
+                            {isItemPreviewPlaying ? 'Durdur' : 'Dinle'}
+                          </Text>
+                        </>
+                      )}
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[
+                        styles.oneTapDownloadBtn,
+                        existingQueueTask && styles.oneTapDownloadBtnQueued,
+                      ]}
+                      onPress={() => handleOneTapDownloadSearchItem(item)}
+                      disabled={Boolean(existingQueueTask)}
+                    >
+                      <Ionicons
+                        name={existingQueueTask ? 'time-outline' : 'download-outline'}
+                        size={15}
+                        color="#FFFFFF"
+                      />
+                      <Text style={styles.oneTapDownloadBtnText}>
+                        {existingQueueTask ? 'Sırada' : 'İndir'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              );
+            })}
+          </View>
+        </View>
+      )}
 
       {/* YouTube Arama Sonuçları Listesi (Tek Tıkla Dinle ve Tek Tıkla İndir!) */}
       {!videoInfo && searchResults.length > 0 && (
@@ -1262,6 +1513,56 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '800',
     color: '#0F172A',
+  },
+  presetHeaderRightGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  wifiTogglePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 9,
+    paddingVertical: 6,
+    borderRadius: 10,
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+  },
+  wifiTogglePillDark: {
+    backgroundColor: '#1E293B',
+    borderColor: '#334155',
+  },
+  wifiTogglePillActive: {
+    backgroundColor: '#059669',
+    borderColor: '#059669',
+  },
+  wifiToggleText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  playlistBatchHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  queueAllPlaylistBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+    backgroundColor: '#4F46E5',
+    height: 42,
+    borderRadius: 11,
+    paddingHorizontal: 12,
+  },
+  queueAllPlaylistBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12.5,
+    fontWeight: '700',
   },
   presetSelectedBadge: {
     flexDirection: 'row',

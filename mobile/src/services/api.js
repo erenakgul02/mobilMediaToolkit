@@ -7,6 +7,9 @@ const LOCAL_HISTORY_KEY = '@mobil_media_toolkit_local_downloads';
 const PLAYLISTS_STORAGE_KEY = '@mobil_media_toolkit_playlists';
 const THEME_STORAGE_KEY = '@mobil_media_toolkit_theme';
 const DEFAULT_PRESET_STORAGE_KEY = '@mobil_media_toolkit_default_preset';
+const WIFI_ONLY_STORAGE_KEY = '@mobil_media_toolkit_wifi_only';
+
+let wifiOnlyEnabledMemory = false;
 
 export const DOWNLOAD_PRESETS = [
   {
@@ -63,6 +66,40 @@ export async function setDefaultDownloadPreset(presetId) {
     console.warn('Varsayılan indirme tercihi kaydedilemedi:', e);
   }
   return DOWNLOAD_PRESETS.find((p) => p.id === presetId) || DOWNLOAD_PRESETS[0];
+}
+
+export async function getWifiOnlyMode() {
+  try {
+    const val = await AsyncStorage.getItem(WIFI_ONLY_STORAGE_KEY);
+    wifiOnlyEnabledMemory = val === 'true';
+    return wifiOnlyEnabledMemory;
+  } catch (e) {
+    return false;
+  }
+}
+
+export async function setWifiOnlyMode(enabled) {
+  wifiOnlyEnabledMemory = Boolean(enabled);
+  try {
+    await AsyncStorage.setItem(WIFI_ONLY_STORAGE_KEY, wifiOnlyEnabledMemory ? 'true' : 'false');
+  } catch (e) {
+    console.warn('Wi-Fi modu kaydedilemedi:', e);
+  }
+  if (!wifiOnlyEnabledMemory) {
+    processDownloadQueue();
+  }
+  return wifiOnlyEnabledMemory;
+}
+
+export async function checkWifiConnected() {
+  if (Platform.OS === 'android' && YoutubeDLNative && YoutubeDLNative.isWifiConnected) {
+    try {
+      return await YoutubeDLNative.isWifiConnected();
+    } catch (_) {
+      return true;
+    }
+  }
+  return true;
 }
 
 const YoutubeDLNative = NativeModules.YoutubeDLNative;
@@ -392,6 +429,52 @@ export async function fetchVideoInfo(url) {
   throw new Error('Video bilgileri alınamadı. Lütfen geçerli bir YouTube video linki yapıştırın.');
 }
 
+export function isYouTubePlaylistUrl(rawInput) {
+  const s = (rawInput || '').trim();
+  if (!s) return false;
+  if (/youtube\.com\/playlist\?list=/i.test(s)) return true;
+  if (/[?&]list=[a-zA-Z0-9_-]+/i.test(s) && !/start_radio=1/i.test(s)) return true;
+  return false;
+}
+
+export async function fetchYouTubePlaylistInfo(url) {
+  let cleanUrl = normalizeUrl(url);
+  // Eğer hem watch?v= hem list= varsa ve kullanıcı playlist analizi istediyse list ID'yi ayıkla
+  const listMatch = cleanUrl.match(/[?&]list=([a-zA-Z0-9_-]+)/);
+  if (listMatch && listMatch[1] && !cleanUrl.includes('/playlist?list=')) {
+    cleanUrl = `https://www.youtube.com/playlist?list=${listMatch[1]}`;
+  }
+
+  if (YoutubeDLNative && YoutubeDLNative.getPlaylistInfo) {
+    const data = await YoutubeDLNative.getPlaylistInfo(cleanUrl);
+    const items = Array.isArray(data?.items)
+      ? data.items.map((item, idx) => ({
+          id: `pl_item_${idx}_${item.url || ''}`,
+          title: item.title || `Parça ${idx + 1}`,
+          url: item.url || '',
+          thumbnail: item.thumbnail || data.thumbnail || '',
+          author: item.uploader || data.uploader || 'YouTube',
+          channel: item.uploader || data.uploader || 'YouTube',
+          duration: formatDuration(item.duration),
+        }))
+      : [];
+
+    if (items.length === 0) {
+      throw new Error('Bu oynatma listesinde indirilebilir video bulunamadı.');
+    }
+
+    return {
+      title: data.title || 'YouTube Oynatma Listesi',
+      uploader: data.uploader || 'YouTube',
+      thumbnail: data.thumbnail || items[0]?.thumbnail || '',
+      itemCount: items.length,
+      items,
+    };
+  }
+
+  throw new Error('Playlist indirme özelliği yalnızca güncel Android APK üzerinde desteklenir.');
+}
+
 // ==========================================
 // SIRALI İNDİRME KUYRUĞU (BEKLEYEN İNDİRMELER)
 // ==========================================
@@ -401,6 +484,24 @@ async function processDownloadQueue() {
   isProcessingQueue = true;
 
   while (downloadQueue.length > 0) {
+    const peekTaskId = downloadQueue[0];
+    const peekTask = nativeTasks[peekTaskId];
+    if (!peekTask || peekTask.status === 'cancelled') {
+      downloadQueue.shift();
+      continue;
+    }
+
+    // Yalnızca Wi-Fi'da İndir seçeneği açıksa Wi-Fi bağlantısını kontrol et
+    if (wifiOnlyEnabledMemory) {
+      const onWifi = await checkWifiConnected();
+      if (!onWifi) {
+        peekTask.status = 'queued';
+        peekTask.speed = 'Wi-Fi bağlantısı bekleniyor...';
+        await new Promise((r) => setTimeout(r, 2500));
+        continue;
+      }
+    }
+
     const nextTaskId = downloadQueue.shift();
     const task = nativeTasks[nextTaskId];
     if (!task || task.status === 'cancelled') {
@@ -694,4 +795,83 @@ export async function getAudioPlayerState() {
     return await YoutubeDLNative.getPlayerState();
   }
   return { isActive: false, isPlaying: false };
+}
+
+export async function toggleShuffleAudio() {
+  if (Platform.OS === 'android' && YoutubeDLNative && YoutubeDLNative.toggleShuffle) {
+    return await YoutubeDLNative.toggleShuffle();
+  }
+  return false;
+}
+
+export async function cycleRepeatModeAudio() {
+  if (Platform.OS === 'android' && YoutubeDLNative && YoutubeDLNative.cycleRepeatMode) {
+    return await YoutubeDLNative.cycleRepeatMode();
+  }
+  return 'OFF';
+}
+
+export async function setSleepTimerAudio(minutes, stopAtTrackEnd = false) {
+  if (Platform.OS === 'android' && YoutubeDLNative && YoutubeDLNative.setSleepTimer) {
+    return await YoutubeDLNative.setSleepTimer(Number(minutes) || 0, Boolean(stopAtTrackEnd));
+  }
+  return false;
+}
+
+export async function setPlaybackSpeedAudio(speed) {
+  if (Platform.OS === 'android' && YoutubeDLNative && YoutubeDLNative.setPlaybackSpeed) {
+    return await YoutubeDLNative.setPlaybackSpeed(Number(speed) || 1.0);
+  }
+  return false;
+}
+
+export async function setAudioPresetAudio(preset) {
+  if (Platform.OS === 'android' && YoutubeDLNative && YoutubeDLNative.setAudioPreset) {
+    return await YoutubeDLNative.setAudioPreset(String(preset || 'NORMAL'));
+  }
+  return false;
+}
+
+export async function fetchDeviceStorageStats() {
+  if (Platform.OS === 'android' && YoutubeDLNative && YoutubeDLNative.getStorageStats) {
+    try {
+      return await YoutubeDLNative.getStorageStats();
+    } catch (_) {
+      return null;
+    }
+  }
+  return null;
+}
+
+export async function trimAudioClip({ item, startSec, endSec, setAsRingtone = false }) {
+  if (Platform.OS === 'android' && YoutubeDLNative && YoutubeDLNative.trimAudioFile) {
+    const res = await YoutubeDLNative.trimAudioFile(
+      item?.download_url || '',
+      item?.filename || '',
+      Number(startSec) || 0,
+      Number(endSec) || 30,
+      Boolean(setAsRingtone)
+    );
+
+    if (res && res.fileName) {
+      const downloadUrl = res.filePath ? `file://${res.filePath}` : '';
+      const trimmedEntry = {
+        id: `trim_${Date.now()}`,
+        filename: res.fileName,
+        title: `${item?.title || item?.filename || 'Şarkı'} (Kesit ${Math.floor(startSec)}s-${Math.floor(endSec)}s)`,
+        uploader: item?.uploader || 'MediaToolkit',
+        thumbnail: item?.thumbnail || '',
+        type: 'm4a',
+        quality: 'high',
+        filesize: res.fileSize || '',
+        download_url: downloadUrl,
+        date: 'Bugün',
+        createdAt: new Date().toISOString(),
+      };
+      await addLocalHistoryItem(trimmedEntry);
+    }
+
+    return res;
+  }
+  throw new Error('Ses kırpıcı yalnızca güncel Android APK üzerinde desteklenir.');
 }

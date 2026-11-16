@@ -19,6 +19,10 @@ import android.graphics.Shader
 import android.media.AudioAttributes
 import android.media.MediaMetadata
 import android.media.MediaPlayer
+import android.media.PlaybackParams
+import android.media.audiofx.BassBoost
+import android.media.audiofx.Equalizer
+import android.media.audiofx.LoudnessEnhancer
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
 import android.os.Build
@@ -36,6 +40,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.Executors
 import kotlin.math.min
+import kotlin.random.Random
 
 data class PlaylistTrack(
     val id: String,
@@ -53,6 +58,7 @@ class MusicPlayerService : Service() {
         private const val TAG = "MusicPlayerService"
         const val CHANNEL_ID = "MediaToolkit_Music_Channel"
         const val NOTIFICATION_ID = 4042
+        private const val RESUME_PREFS_NAME = "MediaToolkitResumePrefs"
 
         const val ACTION_PLAY_PAUSE = "com.alierenakgul.mobilmediatoolkit.ACTION_PLAY_PAUSE"
         const val ACTION_NEXT = "com.alierenakgul.mobilmediatoolkit.ACTION_NEXT"
@@ -70,6 +76,27 @@ class MusicPlayerService : Service() {
         private var isPlayingState: Boolean = false
         private var currentPositionMs: Int = 0
         private var currentDurationMs: Int = 0
+
+        // Karışık Çal (Shuffle) & Tekrarla (Repeat: "OFF", "ALL", "ONE")
+        @Volatile
+        private var shuffleEnabled: Boolean = false
+
+        @Volatile
+        private var repeatMode: String = "OFF"
+
+        // Uyku Zamanlayıcısı (Sleep Timer)
+        @Volatile
+        private var sleepTimerEndTimeMs: Long = 0L
+
+        @Volatile
+        private var sleepStopAtEndOfTrack: Boolean = false
+
+        // Oynatma Hızı & Ses Profili (Equalizer / BassBoost / LoudnessEnhancer)
+        @Volatile
+        private var playbackSpeed: Float = 1.0f
+
+        @Volatile
+        private var audioPreset: String = "NORMAL" // "NORMAL" | "BASS" | "VOCAL" | "LOUD"
 
         private val bitmapCache = object : LruCache<String, Bitmap>(16) {}
         private val artExecutor = Executors.newSingleThreadExecutor()
@@ -117,6 +144,48 @@ class MusicPlayerService : Service() {
             instance?.seekToInternal(posMs)
         }
 
+        fun toggleShuffleMode(): Boolean {
+            shuffleEnabled = !shuffleEnabled
+            emitStateToRN()
+            return shuffleEnabled
+        }
+
+        fun cycleRepeatModeState(): String {
+            repeatMode = when (repeatMode) {
+                "OFF" -> "ALL"
+                "ALL" -> "ONE"
+                else -> "OFF"
+            }
+            emitStateToRN()
+            return repeatMode
+        }
+
+        fun setSleepTimerState(minutes: Int, stopAtTrackEnd: Boolean) {
+            if (stopAtTrackEnd) {
+                sleepStopAtEndOfTrack = true
+                sleepTimerEndTimeMs = 0L
+            } else if (minutes > 0) {
+                sleepStopAtEndOfTrack = false
+                sleepTimerEndTimeMs = System.currentTimeMillis() + minutes * 60_000L
+            } else {
+                sleepStopAtEndOfTrack = false
+                sleepTimerEndTimeMs = 0L
+            }
+            emitStateToRN()
+        }
+
+        fun setPlaybackSpeedState(speed: Float) {
+            playbackSpeed = speed.coerceIn(0.5f, 2.0f)
+            instance?.applyPlaybackSpeedInternal()
+            emitStateToRN()
+        }
+
+        fun setAudioPresetState(preset: String) {
+            audioPreset = preset.uppercase()
+            instance?.applyAudioPresetInternal()
+            emitStateToRN()
+        }
+
         fun getCurrentStateMap() = Arguments.createMap().apply {
             val track = playlist.getOrNull(currentIndex)
             putBoolean("isActive", track != null && instance != null)
@@ -125,6 +194,17 @@ class MusicPlayerService : Service() {
             putInt("playlistCount", playlist.size)
             putDouble("positionMs", currentPositionMs.toDouble())
             putDouble("durationMs", currentDurationMs.toDouble())
+            putBoolean("shuffleEnabled", shuffleEnabled)
+            putString("repeatMode", repeatMode)
+            putDouble("playbackSpeed", playbackSpeed.toDouble())
+            putString("audioPreset", audioPreset)
+            putBoolean("sleepStopAtEndOfTrack", sleepStopAtEndOfTrack)
+
+            val remainingSec = if (sleepTimerEndTimeMs > 0L) {
+                ((sleepTimerEndTimeMs - System.currentTimeMillis()) / 1000L).coerceAtLeast(0L).toInt()
+            } else 0
+            putInt("sleepTimerRemainingSec", remainingSec)
+
             if (track != null) {
                 putString("id", track.id)
                 putString("title", track.title)
@@ -145,11 +225,6 @@ class MusicPlayerService : Service() {
             }
         }
 
-        /**
-         * Video kapak resmini şık bir "Plak (Vinyl Record)" tasarımına dönüştürür.
-         * Bildirim çubuğunda her şarkı geçişinde yalnızca 1 kez üretilip önbelleğe alındığı için
-         * telefonun işlemcisini veya pilini kesinlikle yormaz (%0 arka plan CPU kullanımı).
-         */
         fun createVinylRecordBitmap(source: Bitmap?): Bitmap {
             val size = 320
             val center = size / 2f
@@ -217,20 +292,39 @@ class MusicPlayerService : Service() {
 
     private var mediaPlayer: MediaPlayer? = null
     private var mediaSession: MediaSession? = null
+    private var bassBoost: BassBoost? = null
+    private var equalizer: Equalizer? = null
+    private var loudnessEnhancer: LoudnessEnhancer? = null
+
     private val mainHandler = Handler(Looper.getMainLooper())
     private var currentVinylBitmap: Bitmap? = null
+    private var resumeSaveCounter: Int = 0
 
     private val progressRunnable = object : Runnable {
         override fun run() {
+            // Uyku zamanlayıcısı süresi dolduysa oynatıcıyı otomatik kapat
+            if (sleepTimerEndTimeMs > 0L && System.currentTimeMillis() >= sleepTimerEndTimeMs) {
+                sleepTimerEndTimeMs = 0L
+                sleepStopAtEndOfTrack = false
+                stopPlayerAndService()
+                return
+            }
+
             val mp = mediaPlayer
             if (mp != null && isPlayingState) {
                 try {
                     currentPositionMs = mp.currentPosition
                     currentDurationMs = mp.duration.coerceAtLeast(0)
+                    resumeSaveCounter++
+                    if (resumeSaveCounter % 4 == 0) {
+                        saveCurrentTrackResumePosition()
+                    }
                     updateMediaSessionPlaybackState()
                     emitStateToRN()
                 } catch (_: Exception) {
                 }
+            } else if (sleepTimerEndTimeMs > 0L) {
+                emitStateToRN()
             }
             mainHandler.postDelayed(this, 800L)
         }
@@ -258,6 +352,7 @@ class MusicPlayerService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        saveCurrentTrackResumePosition()
         mainHandler.removeCallbacksAndMessages(null)
         releaseMediaPlayer()
         try {
@@ -289,10 +384,154 @@ class MusicPlayerService : Service() {
                 val target = posMs.coerceIn(0, currentDurationMs.coerceAtLeast(0))
                 mp.seekTo(target)
                 currentPositionMs = target
+                saveCurrentTrackResumePosition()
                 updateMediaSessionPlaybackState()
                 emitStateToRN()
             } catch (_: Exception) {}
         }
+    }
+
+    private fun saveCurrentTrackResumePosition() {
+        val track = playlist.getOrNull(currentIndex) ?: return
+        if (track.id.startsWith("preview_")) return
+        val key = track.filename.ifBlank { track.id }
+        if (key.isBlank()) return
+        try {
+            val prefs = getSharedPreferences(RESUME_PREFS_NAME, Context.MODE_PRIVATE)
+            if (currentPositionMs > 5000 && currentDurationMs > 0 && currentPositionMs < currentDurationMs - 5000) {
+                prefs.edit().putInt(key, currentPositionMs).apply()
+            } else if (currentDurationMs > 0 && currentPositionMs >= currentDurationMs - 5000) {
+                prefs.edit().remove(key).apply()
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun clearTrackResumePosition(track: PlaylistTrack) {
+        val key = track.filename.ifBlank { track.id }
+        if (key.isBlank()) return
+        try {
+            val prefs = getSharedPreferences(RESUME_PREFS_NAME, Context.MODE_PRIVATE)
+            prefs.edit().remove(key).apply()
+        } catch (_: Exception) {}
+    }
+
+    private fun getSavedResumePosition(track: PlaylistTrack, durationMs: Int): Int {
+        if (track.id.startsWith("preview_")) return 0
+        val key = track.filename.ifBlank { track.id }
+        if (key.isBlank()) return 0
+        return try {
+            val prefs = getSharedPreferences(RESUME_PREFS_NAME, Context.MODE_PRIVATE)
+            val saved = prefs.getInt(key, 0)
+            if (saved in 5000 until (durationMs - 5000).coerceAtLeast(5001)) saved else 0
+        } catch (_: Exception) {
+            0
+        }
+    }
+
+    fun applyPlaybackSpeedInternal() {
+        mainHandler.post {
+            val mp = mediaPlayer ?: return@post
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                try {
+                    val wasPlaying = mp.isPlaying
+                    val params = mp.playbackParams ?: PlaybackParams()
+                    params.speed = playbackSpeed
+                    mp.playbackParams = params
+                    if (!wasPlaying && isPlayingState) {
+                        mp.start()
+                    } else if (!isPlayingState && mp.isPlaying) {
+                        mp.pause()
+                    }
+                    updateMediaSessionPlaybackState()
+                } catch (e: Exception) {
+                    Log.w(TAG, "Oynatma hızı uygulanamadı: ${e.message}")
+                }
+            }
+        }
+    }
+
+    fun applyAudioPresetInternal() {
+        mainHandler.post {
+            val mp = mediaPlayer ?: return@post
+            val sessionId = mp.audioSessionId
+            if (sessionId <= 0) return@post
+
+            try {
+                if (bassBoost == null) {
+                    bassBoost = BassBoost(0, sessionId)
+                }
+                if (equalizer == null) {
+                    equalizer = Equalizer(0, sessionId)
+                }
+                if (loudnessEnhancer == null) {
+                    loudnessEnhancer = LoudnessEnhancer(sessionId)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Ses efekt motoru başlatma uyarısı: ${e.message}")
+            }
+
+            try {
+                when (audioPreset) {
+                    "BASS" -> {
+                        bassBoost?.enabled = true
+                        bassBoost?.setStrength(850.toShort())
+                        loudnessEnhancer?.enabled = true
+                        loudnessEnhancer?.setTargetGain(300)
+                        equalizer?.let { eq ->
+                            eq.enabled = true
+                            val bands = eq.numberOfBands.toInt()
+                            val maxLevel = eq.bandLevelRange[1]
+                            if (bands >= 1) eq.setBandLevel(0.toShort(), (maxLevel * 0.75).toInt().toShort())
+                            if (bands >= 2) eq.setBandLevel(1.toShort(), (maxLevel * 0.45).toInt().toShort())
+                        }
+                    }
+                    "VOCAL" -> {
+                        bassBoost?.enabled = false
+                        loudnessEnhancer?.enabled = true
+                        loudnessEnhancer?.setTargetGain(250)
+                        equalizer?.let { eq ->
+                            eq.enabled = true
+                            val bands = eq.numberOfBands.toInt()
+                            val maxLevel = eq.bandLevelRange[1]
+                            for (b in 0 until bands) {
+                                val ratio = if (b == bands / 2 || b == (bands / 2) + 1) 0.65 else -0.15
+                                eq.setBandLevel(b.toShort(), (maxLevel * ratio).toInt().toShort())
+                            }
+                        }
+                    }
+                    "LOUD" -> {
+                        bassBoost?.enabled = true
+                        bassBoost?.setStrength(500.toShort())
+                        loudnessEnhancer?.enabled = true
+                        loudnessEnhancer?.setTargetGain(750)
+                        equalizer?.enabled = false
+                    }
+                    else -> {
+                        // NORMAL
+                        bassBoost?.enabled = false
+                        loudnessEnhancer?.enabled = false
+                        equalizer?.enabled = false
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Ses profili uygulanamadı: ${e.message}")
+            }
+        }
+    }
+
+    private fun releaseAudioEffects() {
+        try {
+            bassBoost?.release()
+        } catch (_: Exception) {}
+        bassBoost = null
+        try {
+            equalizer?.release()
+        } catch (_: Exception) {}
+        equalizer = null
+        try {
+            loudnessEnhancer?.release()
+        } catch (_: Exception) {}
+        loudnessEnhancer = null
     }
 
     private fun createNotificationChannel() {
@@ -360,7 +599,6 @@ class MusicPlayerService : Service() {
             return
         }
 
-        // Önce varsayılan plak görselini hazırla, ardından kapak resmini arka planda indirip güncelle
         val defaultVinyl = bitmapCache.get("__default_vinyl__")
             ?: createVinylRecordBitmap(null).also { bitmapCache.put("__default_vinyl__", it) }
         currentVinylBitmap = defaultVinyl
@@ -422,21 +660,77 @@ class MusicPlayerService : Service() {
                 setDataSource(file.absolutePath)
                 setOnPreparedListener { player ->
                     currentDurationMs = player.duration.coerceAtLeast(0)
-                    currentPositionMs = 0
+                    val savedPos = getSavedResumePosition(track, currentDurationMs)
+                    if (savedPos > 0) {
+                        player.seekTo(savedPos)
+                        currentPositionMs = savedPos
+                    } else {
+                        currentPositionMs = 0
+                    }
+
                     player.start()
                     isPlayingState = true
+
+                    if (playbackSpeed != 1.0f) {
+                        applyPlaybackSpeedInternal()
+                    }
+                    if (audioPreset != "NORMAL") {
+                        applyAudioPresetInternal()
+                    }
+
                     updateMediaSessionMetadata(track, currentDurationMs.toLong(), currentVinylBitmap)
                     updateMediaSessionPlaybackState()
                     startOrUpdateForegroundNotification(track)
                     emitStateToRN()
                 }
-                setOnCompletionListener {
+                setOnCompletionListener { player ->
+                    clearTrackResumePosition(track)
+
+                    // "Bu Şarkı Bitince Kapat" uyku modu aktifse durdur
+                    if (sleepStopAtEndOfTrack) {
+                        sleepStopAtEndOfTrack = false
+                        sleepTimerEndTimeMs = 0L
+                        stopPlayerAndService()
+                        return@setOnCompletionListener
+                    }
+
+                    // Tek Şarkı Tekrarı ("ONE") aktifse aynı şarkıyı baştan çal
+                    if (repeatMode == "ONE") {
+                        currentPositionMs = 0
+                        player.seekTo(0)
+                        player.start()
+                        isPlayingState = true
+                        updateMediaSessionPlaybackState()
+                        startOrUpdateForegroundNotification(track)
+                        emitStateToRN()
+                        return@setOnCompletionListener
+                    }
+
                     if (playlist.size > 1) {
-                        skipToNext()
+                        if (shuffleEnabled) {
+                            skipToNext()
+                        } else if (currentIndex + 1 < playlist.size || repeatMode == "ALL") {
+                            skipToNext()
+                        } else {
+                            isPlayingState = false
+                            currentPositionMs = 0
+                            player.seekTo(0)
+                            updateMediaSessionPlaybackState()
+                            startOrUpdateForegroundNotification(track)
+                            emitStateToRN()
+                        }
+                    } else if (repeatMode == "ALL") {
+                        currentPositionMs = 0
+                        player.seekTo(0)
+                        player.start()
+                        isPlayingState = true
+                        updateMediaSessionPlaybackState()
+                        startOrUpdateForegroundNotification(track)
+                        emitStateToRN()
                     } else {
                         isPlayingState = false
                         currentPositionMs = 0
-                        it.seekTo(0)
+                        player.seekTo(0)
                         updateMediaSessionPlaybackState()
                         startOrUpdateForegroundNotification(track)
                         emitStateToRN()
@@ -468,11 +762,16 @@ class MusicPlayerService : Service() {
         }
         try {
             if (mp.isPlaying) {
+                currentPositionMs = mp.currentPosition
+                saveCurrentTrackResumePosition()
                 mp.pause()
                 isPlayingState = false
             } else {
                 mp.start()
                 isPlayingState = true
+                if (playbackSpeed != 1.0f) {
+                    applyPlaybackSpeedInternal()
+                }
             }
             currentPositionMs = mp.currentPosition
             updateMediaSessionPlaybackState()
@@ -485,7 +784,13 @@ class MusicPlayerService : Service() {
 
     private fun skipToNext() {
         if (playlist.isEmpty()) return
-        currentIndex = (currentIndex + 1) % playlist.size
+        saveCurrentTrackResumePosition()
+        currentIndex = if (shuffleEnabled && playlist.size > 1) {
+            val candidates = playlist.indices.filter { it != currentIndex }
+            candidates[Random.nextInt(candidates.size)]
+        } else {
+            (currentIndex + 1) % playlist.size
+        }
         playCurrentTrack()
     }
 
@@ -495,15 +800,23 @@ class MusicPlayerService : Service() {
         if (mp != null && mp.currentPosition > 4000) {
             mp.seekTo(0)
             currentPositionMs = 0
+            saveCurrentTrackResumePosition()
             updateMediaSessionPlaybackState()
             emitStateToRN()
             return
         }
-        currentIndex = if (currentIndex - 1 < 0) playlist.size - 1 else currentIndex - 1
+        saveCurrentTrackResumePosition()
+        currentIndex = if (shuffleEnabled && playlist.size > 1) {
+            val candidates = playlist.indices.filter { it != currentIndex }
+            candidates[Random.nextInt(candidates.size)]
+        } else {
+            if (currentIndex - 1 < 0) playlist.size - 1 else currentIndex - 1
+        }
         playCurrentTrack()
     }
 
     private fun stopPlayerAndService() {
+        saveCurrentTrackResumePosition()
         releaseMediaPlayer()
         isPlayingState = false
         currentPositionMs = 0
@@ -522,6 +835,7 @@ class MusicPlayerService : Service() {
     }
 
     private fun releaseMediaPlayer() {
+        releaseAudioEffects()
         try {
             mediaPlayer?.stop()
         } catch (_: Exception) {}
@@ -549,7 +863,7 @@ class MusicPlayerService : Service() {
     private fun updateMediaSessionPlaybackState() {
         val session = mediaSession ?: return
         val stateInt = if (isPlayingState) PlaybackState.STATE_PLAYING else PlaybackState.STATE_PAUSED
-        val speed = if (isPlayingState) 1.0f else 0.0f
+        val speed = if (isPlayingState) playbackSpeed else 0.0f
         val state = PlaybackState.Builder()
             .setActions(
                 PlaybackState.ACTION_PLAY or

@@ -26,6 +26,8 @@ import {
   deletePlaylist,
   renamePlaylist,
   toggleTrackInPlaylist,
+  fetchDeviceStorageStats,
+  trimAudioClip,
 } from '../services/api';
 
 function isItemAudio(item) {
@@ -48,6 +50,15 @@ function parseSizeToBytes(sizeStr) {
   if (s.includes('MB')) return num * 1024 * 1024;
   if (s.includes('KB')) return num * 1024;
   return num;
+}
+
+function formatTotalBytes(bytes) {
+  if (!bytes || bytes <= 0) return '0 MB';
+  const mb = bytes / (1024 * 1024);
+  if (mb >= 1024) {
+    return `${(mb / 1024).toFixed(2)} GB`;
+  }
+  return `${mb.toFixed(1)} MB`;
 }
 
 const SORT_OPTIONS = [
@@ -87,15 +98,25 @@ export default function HistoryTab({
   const [editingPlaylistId, setEditingPlaylistId] = useState(null);
   const [quickAddTargetSong, setQuickAddTargetSong] = useState(null);
 
+  // Depolama Özeti & Ses Kırpıcı (Zil Sesi) State'leri
+  const [storageStats, setStorageStats] = useState(null);
+  const [trimModalVisible, setTrimModalVisible] = useState(false);
+  const [trimTargetSong, setTrimTargetSong] = useState(null);
+  const [trimStartSec, setTrimStartSec] = useState('30');
+  const [trimEndSec, setTrimEndSec] = useState('60');
+  const [trimLoading, setTrimLoading] = useState(false);
+
   const loadHistoryAndPlaylists = async () => {
     setLoading(true);
     try {
-      const [historyData, playlistData] = await Promise.all([
+      const [historyData, playlistData, diskStats] = await Promise.all([
         getLocalHistory(),
         getPlaylists(),
+        fetchDeviceStorageStats(),
       ]);
       setItems(historyData);
       setPlaylists(playlistData);
+      if (diskStats) setStorageStats(diskStats);
     } catch (e) {
       console.warn('Geçmiş veya listeler alınamadı:', e);
     } finally {
@@ -109,6 +130,81 @@ export default function HistoryTab({
 
   const audioItems = useMemo(() => items.filter(isItemAudio), [items]);
   const videoItems = useMemo(() => items.filter((i) => !isItemAudio(i)), [items]);
+
+  const totalDownloadedSizeLabel = useMemo(() => {
+    const sumBytes = items.reduce(
+      (acc, cur) => acc + parseSizeToBytes(cur.filesize),
+      0
+    );
+    return formatTotalBytes(sumBytes);
+  }, [items]);
+
+  const openTrimmerModal = (songItem) => {
+    setTrimTargetSong(songItem);
+    setTrimStartSec('30');
+    setTrimEndSec('60');
+    setTrimModalVisible(true);
+  };
+
+  const handleApplyQuickTrimRange = (startS, durationS) => {
+    const s = Math.max(0, Number(startS) || 0);
+    const d = Math.max(5, Number(durationS) || 30);
+    setTrimStartSec(String(s));
+    setTrimEndSec(String(s + d));
+  };
+
+  const handleExecuteTrim = async (setAsRingtone) => {
+    if (!trimTargetSong) return;
+    const startN = parseFloat(trimStartSec) || 0;
+    const endN = parseFloat(trimEndSec) || 0;
+    if (endN <= startN + 1) {
+      Alert.alert(
+        'Uyarı',
+        'Bitiş saniyesi başlangıç saniyesinden en az 2 saniye büyük olmalıdır.'
+      );
+      return;
+    }
+
+    setTrimLoading(true);
+    try {
+      const res = await trimAudioClip({
+        item: trimTargetSong,
+        startSec: startN,
+        endSec: endN,
+        setAsRingtone,
+      });
+      await loadHistoryAndPlaylists();
+      setTrimModalVisible(false);
+
+      if (setAsRingtone) {
+        if (res?.needsWriteSettingsPermission) {
+          Alert.alert(
+            'Kesit Kaydedildi & İzin Gerekli',
+            `Şarkı kesiti (${res.fileName}) İndirilenler listesine kaydedildi. Telefon zil sesi olarak otomatik atanabilmesi için açılan ekrandan 'Sistem ayarlarını değiştirme' iznini aktif edip tekrar deneyebilirsiniz.`
+          );
+        } else if (res?.ringtoneSet) {
+          Alert.alert(
+            'Zil Sesi Ayarlandı',
+            `Seçtiğiniz ${Math.floor(endN - startN)} saniyelik kesit (${res.fileName}) kaydedildi ve telefon zil sesi olarak ayarlandı.`
+          );
+        } else {
+          Alert.alert(
+            'Kesit Kaydedildi',
+            `Şarkı kesiti (${res?.fileName || 'M4A'}) İndirilenler listesine ve Ringtones klasörüne kaydedildi.`
+          );
+        }
+      } else {
+        Alert.alert(
+          'Kesit Hazır',
+          `${Math.floor(endN - startN)} saniyelik şarkı kesiti (${res?.fileName || 'M4A'}) İndirilenler listesinin en üstüne eklendi.`
+        );
+      }
+    } catch (e) {
+      Alert.alert('Kırpma Hatası', e.message || 'Ses dosyası kesilemedi.');
+    } finally {
+      setTrimLoading(false);
+    }
+  };
 
   const activePlaylistObj = useMemo(
     () => playlists.find((p) => p.id === selectedPlaylistId) || null,
@@ -600,6 +696,20 @@ export default function HistoryTab({
             </TouchableOpacity>
           )}
 
+          {/* Şarkıyı Kırp / Zil Sesi Yap Butonu */}
+          {isAudio && (
+            <TouchableOpacity
+              style={[styles.iconCircleBtn, isDarkMode && styles.iconCircleBtnDark]}
+              onPress={() => openTrimmerModal(item)}
+            >
+              <Ionicons
+                name="cut-outline"
+                size={14}
+                color={isDarkMode ? '#FBBF24' : '#D97706'}
+              />
+            </TouchableOpacity>
+          )}
+
           {/* Şarkıyı Çalma Listesine Ekle Butonu */}
           {isAudio && (
             <TouchableOpacity
@@ -663,8 +773,11 @@ export default function HistoryTab({
             <Text
               style={[styles.headerSubtitle, isDarkMode && styles.textSecondaryDark]}
             >
-              {audioItems.length} şarkı • {videoItems.length} video
-              {playlists.length > 0 ? ` • ${playlists.length} playlist` : ''}
+              Toplam {audioItems.length} şarkı, {videoItems.length} video (
+              {totalDownloadedSizeLabel})
+              {storageStats?.freeGbFormatted
+                ? ` • Boş: ${storageStats.freeGbFormatted}`
+                : ''}
             </Text>
           </View>
         </View>
@@ -1515,6 +1628,192 @@ export default function HistoryTab({
           </View>
         </View>
       </Modal>
+
+      {/* ZİL SESİ / BİLDİRİM SESİ KIRPICI (AUDIO TRIMMER) MODALI */}
+      <Modal
+        visible={trimModalVisible && Boolean(trimTargetSong)}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setTrimModalVisible(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View
+            style={[
+              styles.playlistModalCard,
+              isDarkMode && styles.playlistModalCardDark,
+            ]}
+          >
+            <View style={styles.modalHeaderRow}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7, flex: 1 }}>
+                <Ionicons name="cut" size={18} color="#D97706" />
+                <Text
+                  style={[
+                    styles.modalHeaderTitle,
+                    isDarkMode && styles.textPrimaryDark,
+                  ]}
+                >
+                  Şarkı Kesici & Zil Sesi Yapıcı
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={styles.modalCloseBtn}
+                onPress={() => setTrimModalVisible(false)}
+              >
+                <Ionicons
+                  name="close"
+                  size={20}
+                  color={isDarkMode ? '#CBD5E1' : '#475569'}
+                />
+              </TouchableOpacity>
+            </View>
+
+            {trimTargetSong && (
+              <>
+                <Text
+                  style={[
+                    styles.quickAddSongName,
+                    isDarkMode && styles.textSecondaryDark,
+                  ]}
+                  numberOfLines={1}
+                >
+                  Seçili Şarkı: {trimTargetSong.title || trimTargetSong.filename}
+                </Text>
+
+                {/* Hızlı 30 Saniyelik Nakarat Başlangıç Seçicileri */}
+                <Text
+                  style={[
+                    styles.modalSectionSubtitle,
+                    isDarkMode && styles.textSecondaryDark,
+                  ]}
+                >
+                  Hızlı 30 Saniyelik Kesit Aralığı Seç:
+                </Text>
+                <View style={styles.trimPresetRow}>
+                  {[
+                    { label: '0s - 30s', s: 0, d: 30 },
+                    { label: '30s - 60s', s: 30, d: 30 },
+                    { label: '60s - 90s', s: 60, d: 30 },
+                    { label: '90s - 120s', s: 90, d: 30 },
+                  ].map((pr) => {
+                    const active =
+                      Number(trimStartSec) === pr.s &&
+                      Number(trimEndSec) === pr.s + pr.d;
+                    return (
+                      <TouchableOpacity
+                        key={pr.label}
+                        style={[
+                          styles.trimPresetChip,
+                          isDarkMode && styles.trimPresetChipDark,
+                          active && styles.trimPresetChipActive,
+                        ]}
+                        onPress={() => handleApplyQuickTrimRange(pr.s, pr.d)}
+                      >
+                        <Text
+                          style={[
+                            styles.trimPresetChipText,
+                            isDarkMode && styles.textSecondaryDark,
+                            active && { color: '#FFFFFF' },
+                          ]}
+                        >
+                          {pr.label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+
+                {/* Özel Başlangıç ve Bitiş Saniyesi Girişi */}
+                <View style={styles.trimInputsRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text
+                      style={[
+                        styles.modalInputLabel,
+                        isDarkMode && styles.textSecondaryDark,
+                      ]}
+                    >
+                      Başlangıç (Saniye)
+                    </Text>
+                    <TextInput
+                      style={[
+                        styles.modalTextInput,
+                        isDarkMode && styles.modalTextInputDark,
+                      ]}
+                      keyboardType="numeric"
+                      value={trimStartSec}
+                      onChangeText={setTrimStartSec}
+                      placeholder="30"
+                      placeholderTextColor="#94A3B8"
+                    />
+                  </View>
+
+                  <View style={{ flex: 1 }}>
+                    <Text
+                      style={[
+                        styles.modalInputLabel,
+                        isDarkMode && styles.textSecondaryDark,
+                      ]}
+                    >
+                      Bitiş (Saniye)
+                    </Text>
+                    <TextInput
+                      style={[
+                        styles.modalTextInput,
+                        isDarkMode && styles.modalTextInputDark,
+                      ]}
+                      keyboardType="numeric"
+                      value={trimEndSec}
+                      onChangeText={setTrimEndSec}
+                      placeholder="60"
+                      placeholderTextColor="#94A3B8"
+                    />
+                  </View>
+                </View>
+
+                <View style={{ gap: 8, marginTop: 10 }}>
+                  <TouchableOpacity
+                    style={[
+                      styles.modalPrimarySaveBtn,
+                      { backgroundColor: '#D97706' },
+                      trimLoading && { opacity: 0.7 },
+                    ]}
+                    onPress={() => handleExecuteTrim(true)}
+                    disabled={trimLoading}
+                  >
+                    {trimLoading ? (
+                      <ActivityIndicator size="small" color="#FFFFFF" />
+                    ) : (
+                      <>
+                        <Ionicons
+                          name="notifications-outline"
+                          size={17}
+                          color="#FFFFFF"
+                        />
+                        <Text style={styles.modalPrimarySaveText}>
+                          Kes ve Telefon Zil Sesi Yap
+                        </Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[
+                      styles.modalPrimarySaveBtn,
+                      trimLoading && { opacity: 0.7 },
+                    ]}
+                    onPress={() => handleExecuteTrim(false)}
+                    disabled={trimLoading}
+                  >
+                    <Ionicons name="save-outline" size={17} color="#FFFFFF" />
+                    <Text style={styles.modalPrimarySaveText}>
+                      Sadece Kesiti İndirilenlere Kaydet (M4A)
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -2266,5 +2565,38 @@ const styles = StyleSheet.create({
     color: '#4F46E5',
     fontSize: 12.5,
     fontWeight: '700',
+  },
+  trimPresetRow: {
+    flexDirection: 'row',
+    gap: 6,
+    marginBottom: 12,
+  },
+  trimPresetChip: {
+    flex: 1,
+    paddingVertical: 7,
+    borderRadius: 8,
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  trimPresetChipDark: {
+    backgroundColor: '#0B0F19',
+    borderColor: '#1E293B',
+  },
+  trimPresetChipActive: {
+    backgroundColor: '#D97706',
+    borderColor: '#D97706',
+  },
+  trimPresetChipText: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  trimInputsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 6,
   },
 });
