@@ -1,6 +1,6 @@
 import { Platform, NativeModules, DeviceEventEmitter, PermissionsAndroid } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 
 const LOCAL_HISTORY_KEY = '@mobil_media_toolkit_local_downloads';
@@ -18,7 +18,7 @@ export const DOWNLOAD_PRESETS = [
     quality: 'high',
     shortLabel: 'M4A Yüksek',
     fullLabel: 'M4A Yüksek Kalite (Ses)',
-    icon: 'musical-notes',
+    icon: /** @type {const} */ ('musical-notes'),
   },
   {
     id: 'm4a_128',
@@ -26,7 +26,7 @@ export const DOWNLOAD_PRESETS = [
     quality: '128',
     shortLabel: 'M4A Standart',
     fullLabel: 'M4A Standart (Ses)',
-    icon: 'musical-note-outline',
+    icon: /** @type {const} */ ('musical-note-outline'),
   },
   {
     id: 'mp4_1080p',
@@ -34,7 +34,7 @@ export const DOWNLOAD_PRESETS = [
     quality: '1080p',
     shortLabel: 'MP4 1080p HD',
     fullLabel: 'MP4 1080p Full HD (Video)',
-    icon: 'videocam',
+    icon: /** @type {const} */ ('videocam'),
   },
   {
     id: 'mp4_720p',
@@ -42,7 +42,7 @@ export const DOWNLOAD_PRESETS = [
     quality: '720p',
     shortLabel: 'MP4 720p HD',
     fullLabel: 'MP4 720p HD (Video)',
-    icon: 'videocam-outline',
+    icon: /** @type {const} */ ('videocam-outline'),
   },
 ];
 
@@ -73,7 +73,7 @@ export async function getWifiOnlyMode() {
     const val = await AsyncStorage.getItem(WIFI_ONLY_STORAGE_KEY);
     wifiOnlyEnabledMemory = val === 'true';
     return wifiOnlyEnabledMemory;
-  } catch (e) {
+  } catch (_) {
     return false;
   }
 }
@@ -134,7 +134,7 @@ export async function getThemeMode() {
   try {
     const val = await AsyncStorage.getItem(THEME_STORAGE_KEY);
     return val === 'dark';
-  } catch (e) {
+  } catch (_) {
     return false;
   }
 }
@@ -673,7 +673,7 @@ export async function playVideoInApp(item) {
       item?.download_url || '',
       item?.filename || '',
       item?.title || item?.filename || 'Video',
-      item?.uploader || 'MediaToolkit'
+      item?.uploader || 'Media Toolkit'
     );
   }
   return await downloadFileToDevice(item?.download_url, item?.filename, 'open');
@@ -859,7 +859,7 @@ export async function trimAudioClip({ item, startSec, endSec, setAsRingtone = fa
         id: `trim_${Date.now()}`,
         filename: res.fileName,
         title: `${item?.title || item?.filename || 'Şarkı'} (Kesit ${Math.floor(startSec)}s-${Math.floor(endSec)}s)`,
-        uploader: item?.uploader || 'MediaToolkit',
+        uploader: item?.uploader || 'Media Toolkit',
         thumbnail: item?.thumbnail || '',
         type: 'm4a',
         quality: 'high',

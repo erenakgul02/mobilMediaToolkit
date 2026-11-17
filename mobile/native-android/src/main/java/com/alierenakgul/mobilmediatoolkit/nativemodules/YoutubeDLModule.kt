@@ -361,7 +361,7 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
                     ?: throw IOException("Dosya cihazda bulunamadı: $filename")
 
                 if (actionType == "open" && targetFile.extension.lowercase() in listOf("mp4", "m4v", "webm")) {
-                    playVideoInAppInternal(targetFile, filename.removeSuffix(".mp4"), "MediaToolkit", promise)
+                    playVideoInAppInternal(targetFile, filename.removeSuffix(".mp4"), "Media Toolkit", promise)
                     return@execute
                 }
 
@@ -528,7 +528,7 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
                 playVideoInAppInternal(
                     targetFile,
                     title.ifBlank { filename },
-                    uploader.ifBlank { "MediaToolkit" },
+                    uploader.ifBlank { "Media Toolkit" },
                     promise
                 )
             } catch (e: Exception) {
@@ -869,7 +869,7 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
                     layoutParams = LinearLayout.LayoutParams(dpToPx(42), dpToPx(42))
                     background = GradientDrawable().apply {
                         shape = GradientDrawable.OVAL
-                        setColor(Color.parseColor("#660F172A"))
+                        setColor(Color.parseColor("#66181818"))
                         setStroke(dpToPx(1), Color.parseColor("#33FFFFFF"))
                     }
                     addView(
@@ -916,7 +916,7 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
                     layoutParams = LinearLayout.LayoutParams(dpToPx(42), dpToPx(42))
                     background = GradientDrawable().apply {
                         shape = GradientDrawable.OVAL
-                        setColor(Color.parseColor("#660F172A"))
+                        setColor(Color.parseColor("#66181818"))
                         setStroke(dpToPx(1), Color.parseColor("#33FFFFFF"))
                     }
                     addView(
@@ -955,7 +955,7 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
                     }
                     background = GradientDrawable().apply {
                         shape = GradientDrawable.OVAL
-                        setColor(Color.parseColor("#73090D16"))
+                        setColor(Color.parseColor("#73080808"))
                         setStroke(dpToPx(1), Color.parseColor("#40FFFFFF"))
                     }
                     addView(
@@ -971,7 +971,7 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
                     layoutParams = LinearLayout.LayoutParams(dpToPx(70), dpToPx(70))
                     background = GradientDrawable().apply {
                         shape = GradientDrawable.OVAL
-                        setColor(Color.parseColor("#E62563EB"))
+                        setColor(Color.parseColor("#E6B45C16"))
                         setStroke(dpToPx(2), Color.parseColor("#66FFFFFF"))
                     }
                     addView(
@@ -989,7 +989,7 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
                     }
                     background = GradientDrawable().apply {
                         shape = GradientDrawable.OVAL
-                        setColor(Color.parseColor("#73090D16"))
+                        setColor(Color.parseColor("#73080808"))
                         setStroke(dpToPx(1), Color.parseColor("#40FFFFFF"))
                     }
                     addView(
@@ -1037,7 +1037,7 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
 
                 val seekBar = SeekBar(activity).apply {
                     max = 1000
-                    progressTintList = ColorStateList.valueOf(Color.parseColor("#38BDF8"))
+                    progressTintList = ColorStateList.valueOf(Color.parseColor("#FF9B45"))
                     thumbTintList = ColorStateList.valueOf(Color.WHITE)
                     progressBackgroundTintList = ColorStateList.valueOf(Color.parseColor("#4DFFFFFF"))
                     layoutParams = LinearLayout.LayoutParams(
@@ -1162,7 +1162,7 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
                     typeface = Typeface.DEFAULT_BOLD
                     setPadding(dpToPx(18), dpToPx(10), dpToPx(18), dpToPx(10))
                     background = GradientDrawable().apply {
-                        setColor(Color.parseColor("#B30F172A"))
+                        setColor(Color.parseColor("#B3181818"))
                         cornerRadius = dpToPx(20).toFloat()
                         setStroke(dpToPx(1), Color.parseColor("#4DFFFFFF"))
                     }
@@ -1333,7 +1333,7 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
                     PlaylistTrack(
                         id = map.getString("id") ?: fname,
                         title = map.getString("title") ?: fname,
-                        uploader = map.getString("uploader") ?: map.getString("channel") ?: "MediaToolkit",
+                        uploader = map.getString("uploader") ?: map.getString("channel") ?: "Media Toolkit",
                         filePath = resolvedFile.absolutePath,
                         filename = fname,
                         thumbnail = map.getString("thumbnail") ?: ""

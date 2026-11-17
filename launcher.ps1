@@ -16,7 +16,7 @@ Get-NetTCPConnection -LocalPort 5000 -ErrorAction SilentlyContinue | ForEach-Obj
 
 Clear-Host
 Write-Host "=======================================================" -ForegroundColor Cyan
-Write-Host "          Mobil Media Toolkit Baslatiliyor...          " -ForegroundColor Green
+Write-Host "          Media Toolkit Baslatiliyor...          " -ForegroundColor Green
 Write-Host "=======================================================" -ForegroundColor Cyan
 
 # 2. Python Sunucusunu baslat

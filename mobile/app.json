@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Mobil Media Toolkit",
+    "name": "Media Toolkit",
     "slug": "mobil-media-toolkit",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -31,8 +31,8 @@
     },
     "web": {
       "favicon": "./assets/favicon.png",
-      "name": "Mobil Media Toolkit",
-      "shortName": "MediaToolkit",
+      "name": "Media Toolkit",
+      "shortName": "Media Toolkit",
       "themeColor": "#FFFFFF",
       "backgroundColor": "#FFFFFF",
       "display": "standalone",

@@ -235,16 +235,16 @@ class MusicPlayerService : Service() {
 
             // 1. Dış Siyah Plak Gövdesi
             paint.style = Paint.Style.FILL
-            paint.color = Color.parseColor("#111827")
+            paint.color = Color.parseColor("#181818")
             canvas.drawCircle(center, center, outerRadius, paint)
 
             // 2. İnce Plak İzleri (Grooves)
             paint.style = Paint.Style.STROKE
             paint.strokeWidth = 1.5f
-            paint.color = Color.parseColor("#1F2937")
+            paint.color = Color.parseColor("#242424")
             canvas.drawCircle(center, center, outerRadius - 10f, paint)
             canvas.drawCircle(center, center, outerRadius - 20f, paint)
-            paint.color = Color.parseColor("#374151")
+            paint.color = Color.parseColor("#343434")
             canvas.drawCircle(center, center, outerRadius - 28f, paint)
 
             // 3. İç Kapak Resmi (Yuvarlak Kesim - Plak Etiketi)
@@ -268,19 +268,19 @@ class MusicPlayerService : Service() {
                 canvas.drawCircle(center, center, coverRadius, coverPaint)
             } else {
                 paint.style = Paint.Style.FILL
-                paint.color = Color.parseColor("#4F46E5")
+                paint.color = Color.parseColor("#FF9B45")
                 canvas.drawCircle(center, center, coverRadius, paint)
             }
 
             // 4. Kapak Etrafı İnce Mor/İndigo Halka
             paint.style = Paint.Style.STROKE
             paint.strokeWidth = 3f
-            paint.color = Color.parseColor("#6366F1")
+            paint.color = Color.parseColor("#FF9B45")
             canvas.drawCircle(center, center, coverRadius, paint)
 
             // 5. Plak Merkez Göbek Halkası ve Deliği
             paint.style = Paint.Style.FILL
-            paint.color = Color.parseColor("#111827")
+            paint.color = Color.parseColor("#181818")
             canvas.drawCircle(center, center, 22f, paint)
 
             paint.color = Color.parseColor("#E5E7EB")
@@ -539,7 +539,7 @@ class MusicPlayerService : Service() {
             val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "MediaToolkit Müzik Çalar",
+                "Media Toolkit",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
                 description = "İndirilen şarkıları arka planda oynatma kontrolleri"
@@ -849,7 +849,7 @@ class MusicPlayerService : Service() {
         val session = mediaSession ?: return
         val builder = MediaMetadata.Builder()
             .putString(MediaMetadata.METADATA_KEY_TITLE, track.title)
-            .putString(MediaMetadata.METADATA_KEY_ARTIST, track.uploader.ifEmpty { "MediaToolkit" })
+            .putString(MediaMetadata.METADATA_KEY_ARTIST, track.uploader.ifEmpty { "Media Toolkit" })
             .putLong(MediaMetadata.METADATA_KEY_DURATION, durationMs)
 
         if (artwork != null && !artwork.isRecycled) {
@@ -924,7 +924,7 @@ class MusicPlayerService : Service() {
         builder
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setContentTitle(track.title)
-            .setContentText(track.uploader.ifEmpty { "MediaToolkit Müzik Çalar" })
+            .setContentText(track.uploader.ifEmpty { "Media Toolkit" })
             .setSubText("${currentIndex + 1} / ${playlist.size}")
             .setOngoing(isPlayingState)
             .setVisibility(Notification.VISIBILITY_PUBLIC)

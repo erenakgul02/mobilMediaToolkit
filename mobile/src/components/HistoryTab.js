@@ -1,3 +1,4 @@
+import { getTheme, lightTheme, darkTheme } from '../theme';
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
@@ -62,12 +63,12 @@ function formatTotalBytes(bytes) {
 }
 
 const SORT_OPTIONS = [
-  { id: 'date_desc', label: 'En Yeni', icon: 'time-outline' },
-  { id: 'date_asc', label: 'En Eski', icon: 'hourglass-outline' },
-  { id: 'title_asc', label: 'İsim (A-Z)', icon: 'text-outline' },
-  { id: 'title_desc', label: 'İsim (Z-A)', icon: 'text-outline' },
-  { id: 'artist_asc', label: 'Sanatçı (A-Z)', icon: 'person-outline' },
-  { id: 'size_desc', label: 'Boyut', icon: 'analytics-outline' },
+  { id: 'date_desc', label: 'En Yeni', icon: /** @type {const} */ ('time-outline') },
+  { id: 'date_asc', label: 'En Eski', icon: /** @type {const} */ ('hourglass-outline') },
+  { id: 'title_asc', label: 'İsim (A-Z)', icon: /** @type {const} */ ('text-outline') },
+  { id: 'title_desc', label: 'İsim (Z-A)', icon: /** @type {const} */ ('text-outline') },
+  { id: 'artist_asc', label: 'Sanatçı (A-Z)', icon: /** @type {const} */ ('person-outline') },
+  { id: 'size_desc', label: 'Boyut', icon: /** @type {const} */ ('analytics-outline') },
 ];
 
 export default function HistoryTab({
@@ -76,9 +77,12 @@ export default function HistoryTab({
   playerState,
   onOpenExpandedPlayer,
 }) {
+  const theme = getTheme(isDarkMode);
+  const styles = isDarkMode ? darkStyles : lightStyles;
   const [items, setItems] = useState([]);
+  const [menuItem, setMenuItem] = useState(null);
   const [playlists, setPlaylists] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(null);
 
   // Filtre ve Sıralama State'leri
@@ -87,7 +91,7 @@ export default function HistoryTab({
   const [selectedPlaylistId, setSelectedPlaylistId] = useState('ALL');
   const [sortBy, setSortBy] = useState('date_desc');
   const [showSortBar, setShowSortBar] = useState(false);
-  const [showSearch, setShowSearch] = useState(false);
+
   const [searchQuery, setSearchQuery] = useState('');
 
   // Playlist Oluşturma & Şarkı Seçme Modal State'leri
@@ -125,7 +129,17 @@ export default function HistoryTab({
   };
 
   useEffect(() => {
-    loadHistoryAndPlaylists();
+    let active = true;
+    Promise.all([getLocalHistory(), getPlaylists(), fetchDeviceStorageStats()])
+      .then(([history, lists, disk]) => {
+        if (!active) return;
+        setItems(history);
+        setPlaylists(lists);
+        setStorageStats(disk);
+      })
+      .catch((error) => console.warn('Arşiv yüklenemedi:', error))
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
   }, []);
 
   const audioItems = useMemo(() => items.filter(isItemAudio), [items]);
@@ -180,7 +194,7 @@ export default function HistoryTab({
         if (res?.needsWriteSettingsPermission) {
           Alert.alert(
             'Kesit Kaydedildi & İzin Gerekli',
-            `Şarkı kesiti (${res.fileName}) İndirilenler listesine kaydedildi. Telefon zil sesi olarak otomatik atanabilmesi için açılan ekrandan 'Sistem ayarlarını değiştirme' iznini aktif edip tekrar deneyebilirsiniz.`
+            `Şarkı kesiti (${res.fileName}) Arşiv listesine kaydedildi. Telefon zil sesi olarak otomatik atanabilmesi için açılan ekrandan 'Sistem ayarlarını değiştirme' iznini aktif edip tekrar deneyebilirsiniz.`
           );
         } else if (res?.ringtoneSet) {
           Alert.alert(
@@ -190,13 +204,13 @@ export default function HistoryTab({
         } else {
           Alert.alert(
             'Kesit Kaydedildi',
-            `Şarkı kesiti (${res?.fileName || 'M4A'}) İndirilenler listesine ve Ringtones klasörüne kaydedildi.`
+            `Şarkı kesiti (${res?.fileName || 'M4A'}) Arşiv listesine ve Ringtones klasörüne kaydedildi.`
           );
         }
       } else {
         Alert.alert(
           'Kesit Hazır',
-          `${Math.floor(endN - startN)} saniyelik şarkı kesiti (${res?.fileName || 'M4A'}) İndirilenler listesinin en üstüne eklendi.`
+          `${Math.floor(endN - startN)} saniyelik şarkı kesiti (${res?.fileName || 'M4A'}) Arşiv listesinin en üstüne eklendi.`
         );
       }
     } catch (e) {
@@ -216,7 +230,7 @@ export default function HistoryTab({
     const counts = {};
     items.forEach((item) => {
       const artist = (item.uploader || '').trim();
-      if (artist && artist !== 'YouTube' && artist !== 'MediaToolkit') {
+      if (artist && artist !== 'YouTube' && artist !== 'Media Toolkit') {
         counts[artist] = (counts[artist] || 0) + 1;
       }
     });
@@ -530,7 +544,6 @@ export default function HistoryTab({
       : 'MP4';
 
     const isVideoLoading = actionLoading === `${item.filename}_video`;
-    const isShareLoading = actionLoading === `${item.filename}_share`;
 
     const isCurrentTrack =
       isAudio &&
@@ -587,7 +600,7 @@ export default function HistoryTab({
                 />
               ) : (
                 <View style={styles.vinylFallback}>
-                  <Ionicons name="musical-notes" size={16} color="#FFFFFF" />
+                  <Ionicons name="musical-notes" size={16} color={theme.onAccent} />
                 </View>
               )}
               <View style={styles.vinylCenterHole} />
@@ -602,11 +615,11 @@ export default function HistoryTab({
                 />
               ) : (
                 <View style={styles.videoFallback}>
-                  <Ionicons name="videocam" size={18} color="#FFFFFF" />
+                  <Ionicons name="videocam" size={18} color={theme.onAccent} />
                 </View>
               )}
               <View style={styles.videoPlayOverlay}>
-                <Ionicons name="play" size={12} color="#FFFFFF" />
+                <Ionicons name="play" size={12} color={theme.text} />
               </View>
             </View>
           )}
@@ -615,7 +628,7 @@ export default function HistoryTab({
           <View
             style={[
               styles.miniTypeBadge,
-              { backgroundColor: isAudio ? '#4F46E5' : '#0284C7' },
+              { backgroundColor: theme.accent },
             ]}
           >
             <Text style={styles.miniTypeBadgeText}>{badgeLabel}</Text>
@@ -644,7 +657,7 @@ export default function HistoryTab({
                 <Ionicons
                   name={isCurrentTrackPlaying ? 'volume-high' : 'pause'}
                   size={10}
-                  color="#4F46E5"
+                  color={theme.accent}
                 />
                 <Text style={styles.liveDotText}>
                   {isCurrentTrackPlaying ? 'Çalıyor' : 'Duraklatıldı'}
@@ -666,85 +679,43 @@ export default function HistoryTab({
             <TouchableOpacity
               style={[
                 styles.primaryCircleBtn,
-                { backgroundColor: isCurrentTrackPlaying ? '#4338CA' : '#4F46E5' },
+                { backgroundColor: isCurrentTrackPlaying ? theme.accent : theme.accent },
               ]}
               onPress={() => handlePlaySong(item)}
             >
               <Ionicons
                 name={isCurrentTrackPlaying ? 'pause' : 'play'}
                 size={15}
-                color="#FFFFFF"
+                color={theme.onAccent}
                 style={!isCurrentTrackPlaying ? { marginLeft: 1 } : undefined}
               />
             </TouchableOpacity>
           ) : (
             <TouchableOpacity
-              style={[styles.primaryCircleBtn, { backgroundColor: '#0284C7' }]}
+              style={[styles.primaryCircleBtn, { backgroundColor: theme.accent }]}
               onPress={() => handlePlayVideo(item)}
               disabled={isVideoLoading}
             >
               {isVideoLoading ? (
-                <ActivityIndicator size="small" color="#FFFFFF" />
+                <ActivityIndicator size="small" color={theme.onAccent} />
               ) : (
                 <Ionicons
                   name="play"
                   size={15}
-                  color="#FFFFFF"
+                  color={theme.onAccent}
                   style={{ marginLeft: 1 }}
                 />
               )}
             </TouchableOpacity>
           )}
 
-          {/* Şarkıyı Kırp / Zil Sesi Yap Butonu */}
-          {isAudio && (
-            <TouchableOpacity
-              style={[styles.iconCircleBtn, isDarkMode && styles.iconCircleBtnDark]}
-              onPress={() => openTrimmerModal(item)}
-            >
-              <Ionicons
-                name="cut-outline"
-                size={14}
-                color={isDarkMode ? '#FBBF24' : '#D97706'}
-              />
-            </TouchableOpacity>
-          )}
-
-          {/* Şarkıyı Çalma Listesine Ekle Butonu */}
-          {isAudio && (
-            <TouchableOpacity
-              style={[styles.iconCircleBtn, isDarkMode && styles.iconCircleBtnDark]}
-              onPress={() => openQuickAddSongModal(item)}
-            >
-              <Ionicons
-                name="list-outline"
-                size={15}
-                color={isDarkMode ? '#A5B4FC' : '#4F46E5'}
-              />
-            </TouchableOpacity>
-          )}
-
           <TouchableOpacity
-            style={[styles.iconCircleBtn, isDarkMode && styles.iconCircleBtnDark]}
-            onPress={() => handleShare(item)}
-            disabled={isShareLoading}
+            style={styles.iconCircleBtn}
+            accessibilityRole="button"
+            accessibilityLabel={`${item.title || item.filename} için işlemler`}
+            onPress={() => setMenuItem(item)}
           >
-            {isShareLoading ? (
-              <ActivityIndicator size="small" color="#2563EB" />
-            ) : (
-              <Ionicons
-                name="share-social-outline"
-                size={15}
-                color={isDarkMode ? '#60A5FA' : '#2563EB'}
-              />
-            )}
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.iconCircleBtn, isDarkMode && styles.iconCircleBtnDark]}
-            onPress={() => handleDelete(item)}
-          >
-            <Ionicons name="trash-outline" size={15} color="#EF4444" />
+            <Ionicons name="ellipsis-vertical" size={20} color={theme.text} />
           </TouchableOpacity>
         </View>
       </TouchableOpacity>
@@ -756,25 +727,14 @@ export default function HistoryTab({
       {/* Kompakt Üst Başlık */}
       <View style={styles.header}>
         <View style={styles.headerLeftRow}>
-          <TouchableOpacity
-            style={[styles.backIconBtn, isDarkMode && styles.backIconBtnDark]}
-            onPress={onSwitchToDownloader}
-          >
-            <Ionicons
-              name="arrow-back"
-              size={17}
-              color={isDarkMode ? '#60A5FA' : '#2563EB'}
-            />
-          </TouchableOpacity>
           <View>
             <Text style={[styles.headerTitle, isDarkMode && styles.textPrimaryDark]}>
-              İndirilenler
+              Arşiv
             </Text>
             <Text
               style={[styles.headerSubtitle, isDarkMode && styles.textSecondaryDark]}
             >
-              Toplam {audioItems.length} şarkı, {videoItems.length} video (
-              {totalDownloadedSizeLabel})
+              {items.length} parça · {totalDownloadedSizeLabel}
               {storageStats?.freeGbFormatted
                 ? ` • Boş: ${storageStats.freeGbFormatted}`
                 : ''}
@@ -783,32 +743,6 @@ export default function HistoryTab({
         </View>
 
         <View style={styles.headerRightActions}>
-          {items.length > 0 && (
-            <TouchableOpacity
-              style={[
-                styles.iconActionBtn,
-                isDarkMode && styles.iconActionBtnDark,
-                showSearch && styles.iconActionBtnActive,
-              ]}
-              onPress={() => {
-                setShowSearch((prev) => !prev);
-                if (showSearch) setSearchQuery('');
-              }}
-            >
-              <Ionicons
-                name="search-outline"
-                size={16}
-                color={
-                  showSearch
-                    ? '#FFFFFF'
-                    : isDarkMode
-                    ? '#CBD5E1'
-                    : '#475569'
-                }
-              />
-            </TouchableOpacity>
-          )}
-
           {items.length > 0 && (
             <TouchableOpacity
               style={[
@@ -823,17 +757,17 @@ export default function HistoryTab({
                 size={14}
                 color={
                   showSortBar
-                    ? '#FFFFFF'
+                    ? theme.onAccent
                     : isDarkMode
-                    ? '#60A5FA'
-                    : '#2563EB'
+                    ? theme.accent
+                    : theme.accent
                 }
               />
               <Text
                 style={[
                   styles.sortToggleText,
-                  isDarkMode && { color: '#60A5FA' },
-                  showSortBar && { color: '#FFFFFF' },
+                  isDarkMode && { color: theme.accent },
+                  showSortBar && { color: theme.onAccent },
                 ]}
               >
                 {currentSortLabel}
@@ -846,7 +780,7 @@ export default function HistoryTab({
               style={styles.playAllCompactBtn}
               onPress={handlePlayAllSongs}
             >
-              <Ionicons name="headset-outline" size={14} color="#FFFFFF" />
+              <Ionicons name="headset-outline" size={14} color={theme.onAccent} />
               <Text style={styles.playAllCompactText}>Çal</Text>
             </TouchableOpacity>
           )}
@@ -857,41 +791,40 @@ export default function HistoryTab({
             disabled={loading}
           >
             {loading ? (
-              <ActivityIndicator size="small" color="#2563EB" />
+              <ActivityIndicator size="small" color={theme.accent} />
             ) : (
               <Ionicons
                 name="refresh"
                 size={16}
-                color={isDarkMode ? '#60A5FA' : '#2563EB'}
+                color={theme.accent}
               />
             )}
           </TouchableOpacity>
         </View>
       </View>
 
-      {/* İndirilenler İçi Hızlı Arama Kutusu */}
-      {showSearch && items.length > 0 && (
+      {/* Arşiv İçi Hızlı Arama Kutusu */}
+      {items.length > 0 && (
         <View
           style={[
             styles.inlineSearchBox,
             isDarkMode && styles.inlineSearchBoxDark,
           ]}
         >
-          <Ionicons name="search-outline" size={16} color="#64748B" />
+          <Ionicons name="search-outline" size={16} color={theme.muted} />
           <TextInput
             style={[
               styles.inlineSearchInput,
               isDarkMode && styles.textPrimaryDark,
             ]}
-            placeholder="Şarkı, video veya sanatçı adına göre filtrele..."
-            placeholderTextColor="#94A3B8"
+            placeholder="Arşivde ara"
+            placeholderTextColor={theme.muted}
             value={searchQuery}
             onChangeText={setSearchQuery}
-            autoFocus={true}
           />
           {searchQuery.length > 0 && (
             <TouchableOpacity onPress={() => setSearchQuery('')}>
-              <Ionicons name="close-circle" size={17} color="#94A3B8" />
+              <Ionicons name="close-circle" size={17} color={theme.muted} />
             </TouchableOpacity>
           )}
         </View>
@@ -922,10 +855,10 @@ export default function HistoryTab({
                     size={13}
                     color={
                       active
-                        ? '#FFFFFF'
+                        ? theme.onAccent
                         : isDarkMode
-                        ? '#CBD5E1'
-                        : '#475569'
+                        ? theme.muted
+                        : theme.muted
                     }
                   />
                   <Text
@@ -986,10 +919,10 @@ export default function HistoryTab({
               size={13}
               color={
                 filterType === 'audio'
-                  ? '#FFFFFF'
+                  ? theme.onAccent
                   : isDarkMode
-                  ? '#A5B4FC'
-                  : '#4F46E5'
+                  ? theme.accent
+                  : theme.accent
               }
             />
             <Text
@@ -1019,10 +952,10 @@ export default function HistoryTab({
               size={13}
               color={
                 filterType === 'video'
-                  ? '#FFFFFF'
+                  ? theme.onAccent
                   : isDarkMode
-                  ? '#38BDF8'
-                  : '#0284C7'
+                  ? theme.accent
+                  : theme.accent
               }
             />
             <Text
@@ -1041,12 +974,13 @@ export default function HistoryTab({
       {/* Şarkılar Bölümü: Özel Çalma Listeleri (Playlist) Çubuğu */}
       {filterType !== 'video' && audioItems.length > 0 && (
         <View style={styles.playlistSectionWrapper}>
+          <Text style={styles.sectionTitle}>Listelerim</Text>
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={styles.playlistScrollContent}
           >
-            {/* + Yeni Playlist Oluştur Butonu */}
+            {/* + Yeni liste Oluştur Butonu */}
             <TouchableOpacity
               style={[
                 styles.newPlaylistBtn,
@@ -1054,14 +988,14 @@ export default function HistoryTab({
               ]}
               onPress={() => openCreatePlaylistModal(null)}
             >
-              <Ionicons name="add-circle" size={14} color="#4F46E5" />
+              <Ionicons name="add-circle" size={14} color={theme.accent} />
               <Text
                 style={[
                   styles.newPlaylistBtnText,
-                  isDarkMode && { color: '#A5B4FC' },
+                  isDarkMode && { color: theme.accent },
                 ]}
               >
-                Yeni Playlist
+                Yeni liste
               </Text>
             </TouchableOpacity>
 
@@ -1080,10 +1014,10 @@ export default function HistoryTab({
                   size={12}
                   color={
                     selectedPlaylistId === 'ALL'
-                      ? '#FFFFFF'
+                      ? theme.onAccent
                       : isDarkMode
-                      ? '#CBD5E1'
-                      : '#475569'
+                      ? theme.muted
+                      : theme.muted
                   }
                 />
                 <Text
@@ -1119,17 +1053,11 @@ export default function HistoryTab({
                     setSelectedPlaylistId(isSelected ? 'ALL' : pl.id);
                   }}
                 >
-                  <Ionicons
-                    name="list"
-                    size={12}
-                    color={
-                      isSelected
-                        ? '#FFFFFF'
-                        : isDarkMode
-                        ? '#A5B4FC'
-                        : '#4F46E5'
-                    }
-                  />
+                  {items.find((track) => (pl.trackFilenames || []).includes(track.filename) && track.thumbnail)?.thumbnail ? (
+                    <Image source={{ uri: items.find((track) => (pl.trackFilenames || []).includes(track.filename) && track.thumbnail).thumbnail }} style={styles.playlistCover} />
+                  ) : (
+                    <View style={styles.playlistCover}><Ionicons name="musical-notes-outline" size={24} color={theme.accent} /></View>
+                  )}
                   <Text
                     style={[
                       styles.playlistChipText,
@@ -1154,7 +1082,7 @@ export default function HistoryTab({
               ]}
             >
               <View style={styles.activePlaylistInfo}>
-                <Ionicons name="musical-notes" size={15} color="#4F46E5" />
+                <Ionicons name="musical-notes" size={15} color={theme.accent} />
                 <Text
                   style={[
                     styles.activePlaylistTitle,
@@ -1171,7 +1099,7 @@ export default function HistoryTab({
                   style={styles.plActionPlayBtn}
                   onPress={handlePlayAllSongs}
                 >
-                  <Ionicons name="play" size={12} color="#FFFFFF" />
+                  <Ionicons name="play" size={12} color={theme.onAccent} />
                   <Text style={styles.plActionPlayText}>Listeyi Çal</Text>
                 </TouchableOpacity>
 
@@ -1185,12 +1113,12 @@ export default function HistoryTab({
                   <Ionicons
                     name="create-outline"
                     size={14}
-                    color={isDarkMode ? '#A5B4FC' : '#4F46E5'}
+                    color={theme.accent}
                   />
                   <Text
                     style={[
                       styles.plActionEditText,
-                      isDarkMode && { color: '#A5B4FC' },
+                      isDarkMode && { color: theme.accent },
                     ]}
                   >
                     Adı / Şarkıları Düzenle
@@ -1201,7 +1129,7 @@ export default function HistoryTab({
                   style={styles.plActionDeleteBtn}
                   onPress={() => handleDeletePlaylist(activePlaylistObj)}
                 >
-                  <Ionicons name="trash-outline" size={14} color="#EF4444" />
+                  <Ionicons name="trash-outline" size={14} color={theme.danger} />
                 </TouchableOpacity>
               </View>
             </View>
@@ -1230,10 +1158,10 @@ export default function HistoryTab({
                 size={12}
                 color={
                   selectedArtist === 'ALL'
-                    ? '#FFFFFF'
+                    ? theme.onAccent
                     : isDarkMode
-                    ? '#CBD5E1'
-                    : '#475569'
+                    ? theme.muted
+                    : theme.muted
                 }
               />
               <Text
@@ -1290,7 +1218,7 @@ export default function HistoryTab({
                 : 'cloud-download-outline'
             }
             size={46}
-            color={isDarkMode ? '#334155' : '#CBD5E1'}
+            color={isDarkMode ? theme.text : theme.muted}
           />
           <Text style={[styles.emptyTitle, isDarkMode && styles.textPrimaryDark]}>
             {activePlaylistObj
@@ -1301,7 +1229,7 @@ export default function HistoryTab({
               ? 'Henüz indirilmiş şarkı (M4A) yok'
               : filterType === 'video'
               ? 'Henüz indirilmiş video (MP4) yok'
-              : 'Henüz indirme yok'}
+              : 'Henüz indirdiğin bir şey yok.'}
           </Text>
           <Text
             style={[styles.emptyText, isDarkMode && styles.textSecondaryDark]}
@@ -1317,7 +1245,7 @@ export default function HistoryTab({
               style={styles.goToDownloadBtn}
               onPress={() => openEditPlaylistTracksModal(activePlaylistObj)}
             >
-              <Ionicons name="add" size={18} color="#FFFFFF" />
+              <Ionicons name="add" size={18} color={theme.onAccent} />
               <Text style={styles.goToDownloadText}>
                 İndirilen Şarkılardan Ekle
               </Text>
@@ -1330,7 +1258,7 @@ export default function HistoryTab({
                 setSelectedArtist('ALL');
               }}
             >
-              <Ionicons name="refresh-outline" size={16} color="#FFFFFF" />
+              <Ionicons name="refresh-outline" size={16} color={theme.onAccent} />
               <Text style={styles.goToDownloadText}>Filtreleri Temizle</Text>
             </TouchableOpacity>
           ) : (
@@ -1338,8 +1266,8 @@ export default function HistoryTab({
               style={styles.goToDownloadBtn}
               onPress={onSwitchToDownloader}
             >
-              <Ionicons name="add" size={18} color="#FFFFFF" />
-              <Text style={styles.goToDownloadText}>Yeni Medya İndir</Text>
+              <Ionicons name="add" size={18} color={theme.onAccent} />
+              <Text style={styles.goToDownloadText}>İndir</Text>
             </TouchableOpacity>
           )}
         </View>
@@ -1352,6 +1280,33 @@ export default function HistoryTab({
           showsVerticalScrollIndicator={false}
         />
       )}
+
+      <Modal visible={Boolean(menuItem)} transparent animationType="fade" onRequestClose={() => setMenuItem(null)}>
+        <View style={styles.actionBackdrop}>
+          <TouchableOpacity style={StyleSheet.absoluteFill} accessibilityLabel="Menüyü kapat" onPress={() => setMenuItem(null)} />
+          <View style={styles.actionSheet}>
+            <Text style={styles.sectionTitle} numberOfLines={2}>{menuItem?.title || menuItem?.filename}</Text>
+            {[
+              ...(menuItem && isItemAudio(menuItem) ? [
+                { label: 'Listeye ekle', icon: /** @type {const} */ ('list-outline'), run: openQuickAddSongModal },
+                { label: 'Sesi kes', icon: /** @type {const} */ ('cut-outline'), run: openTrimmerModal },
+              ] : []),
+              { label: 'Paylaş', icon: /** @type {const} */ ('share-outline'), run: handleShare },
+              { label: 'Cihazdan sil', icon: /** @type {const} */ ('trash-outline'), run: handleDelete, danger: true },
+            ].map((action) => (
+              <TouchableOpacity key={action.label} style={styles.actionRow} accessibilityRole="button" onPress={() => {
+                const selected = menuItem;
+                setMenuItem(null);
+                if (selected) action.run(selected);
+              }}>
+                <Ionicons name={action.icon} size={22} color={action.danger ? theme.danger : theme.text} />
+                <Text style={{ color: action.danger ? theme.danger : theme.text, fontSize: 16 }}>{action.label}</Text>
+              </TouchableOpacity>
+            ))}
+            <TouchableOpacity style={styles.actionRow} onPress={() => setMenuItem(null)}><Text style={{ color: theme.muted }}>Vazgeç</Text></TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
       {/* PLAYLIST OLUŞTURMA / DÜZENLEME / HIZLI EKLEME MODALI */}
       <Modal
@@ -1387,7 +1342,7 @@ export default function HistoryTab({
                 <Ionicons
                   name="close"
                   size={20}
-                  color={isDarkMode ? '#CBD5E1' : '#475569'}
+                  color={theme.muted}
                 />
               </TouchableOpacity>
             </View>
@@ -1410,7 +1365,7 @@ export default function HistoryTab({
                       isDarkMode && styles.modalTextInputDark,
                     ]}
                     placeholder="Örn: Arabada, Spor, Favorilerim..."
-                    placeholderTextColor="#94A3B8"
+                    placeholderTextColor={theme.muted}
                     value={newPlaylistName}
                     onChangeText={setNewPlaylistName}
                     autoFocus={playlistModalMode === 'create'}
@@ -1462,10 +1417,10 @@ export default function HistoryTab({
                           size={20}
                           color={
                             isChecked
-                              ? '#4F46E5'
+                              ? theme.accent
                               : isDarkMode
-                              ? '#64748B'
-                              : '#94A3B8'
+                              ? theme.muted
+                              : theme.muted
                           }
                         />
                         <View style={styles.songSelectTextCol}>
@@ -1485,7 +1440,7 @@ export default function HistoryTab({
                             ]}
                             numberOfLines={1}
                           >
-                            {song.uploader || 'MediaToolkit'}
+                            {song.uploader || 'Media Toolkit'}
                           </Text>
                         </View>
                       </TouchableOpacity>
@@ -1504,7 +1459,7 @@ export default function HistoryTab({
                   <Ionicons
                     name="checkmark-circle-outline"
                     size={18}
-                    color="#FFFFFF"
+                    color={theme.onAccent}
                   />
                   <Text style={styles.modalPrimarySaveText}>
                     {playlistModalMode === 'create'
@@ -1569,7 +1524,7 @@ export default function HistoryTab({
                           <Ionicons
                             name={inList ? 'checkbox' : 'square-outline'}
                             size={20}
-                            color={inList ? '#4F46E5' : '#94A3B8'}
+                            color={inList ? theme.accent : theme.muted}
                           />
                           <View style={styles.songSelectTextCol}>
                             <Text
@@ -1605,11 +1560,11 @@ export default function HistoryTab({
                       openCreatePlaylistModal(quickAddTargetSong.filename)
                     }
                   >
-                    <Ionicons name="add-circle-outline" size={16} color="#4F46E5" />
+                    <Ionicons name="add-circle-outline" size={16} color={theme.accent} />
                     <Text
                       style={[
                         styles.quickCreateNewText,
-                        isDarkMode && { color: '#A5B4FC' },
+                        isDarkMode && { color: theme.accent },
                       ]}
                     >
                       Bu Şarkıyla Yeni Liste Oluştur
@@ -1645,14 +1600,14 @@ export default function HistoryTab({
           >
             <View style={styles.modalHeaderRow}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7, flex: 1 }}>
-                <Ionicons name="cut" size={18} color="#D97706" />
+                <Ionicons name="cut" size={18} color={theme.accent} />
                 <Text
                   style={[
                     styles.modalHeaderTitle,
                     isDarkMode && styles.textPrimaryDark,
                   ]}
                 >
-                  Şarkı Kesici & Zil Sesi Yapıcı
+                  Sesi kes
                 </Text>
               </View>
               <TouchableOpacity
@@ -1662,7 +1617,7 @@ export default function HistoryTab({
                 <Ionicons
                   name="close"
                   size={20}
-                  color={isDarkMode ? '#CBD5E1' : '#475569'}
+                  color={theme.muted}
                 />
               </TouchableOpacity>
             </View>
@@ -1712,7 +1667,7 @@ export default function HistoryTab({
                           style={[
                             styles.trimPresetChipText,
                             isDarkMode && styles.textSecondaryDark,
-                            active && { color: '#FFFFFF' },
+                            active && { color: theme.onAccent },
                           ]}
                         >
                           {pr.label}
@@ -1742,7 +1697,7 @@ export default function HistoryTab({
                       value={trimStartSec}
                       onChangeText={setTrimStartSec}
                       placeholder="30"
-                      placeholderTextColor="#94A3B8"
+                      placeholderTextColor={theme.muted}
                     />
                   </View>
 
@@ -1764,7 +1719,7 @@ export default function HistoryTab({
                       value={trimEndSec}
                       onChangeText={setTrimEndSec}
                       placeholder="60"
-                      placeholderTextColor="#94A3B8"
+                      placeholderTextColor={theme.muted}
                     />
                   </View>
                 </View>
@@ -1773,20 +1728,20 @@ export default function HistoryTab({
                   <TouchableOpacity
                     style={[
                       styles.modalPrimarySaveBtn,
-                      { backgroundColor: '#D97706' },
+                      { backgroundColor: theme.accent },
                       trimLoading && { opacity: 0.7 },
                     ]}
                     onPress={() => handleExecuteTrim(true)}
                     disabled={trimLoading}
                   >
                     {trimLoading ? (
-                      <ActivityIndicator size="small" color="#FFFFFF" />
+                      <ActivityIndicator size="small" color={theme.onAccent} />
                     ) : (
                       <>
                         <Ionicons
                           name="notifications-outline"
                           size={17}
-                          color="#FFFFFF"
+                          color={theme.onAccent}
                         />
                         <Text style={styles.modalPrimarySaveText}>
                           Kes ve Telefon Zil Sesi Yap
@@ -1803,9 +1758,9 @@ export default function HistoryTab({
                     onPress={() => handleExecuteTrim(false)}
                     disabled={trimLoading}
                   >
-                    <Ionicons name="save-outline" size={17} color="#FFFFFF" />
+                    <Ionicons name="save-outline" size={17} color={theme.onAccent} />
                     <Text style={styles.modalPrimarySaveText}>
-                      Sadece Kesiti İndirilenlere Kaydet (M4A)
+                      Kesiti kaydet
                     </Text>
                   </TouchableOpacity>
                 </View>
@@ -1818,27 +1773,34 @@ export default function HistoryTab({
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (theme) => StyleSheet.create({
+  sectionTitle: { fontSize: 18, fontWeight: '700', color: theme.text, marginBottom: 10 },
+  playlistCover: { width: 44, height: 44, borderRadius: 10, backgroundColor: theme.accentSoft, alignItems: 'center', justifyContent: 'center' },
+  actionBackdrop: { flex: 1, backgroundColor: theme.overlay, justifyContent: 'flex-end' },
+  actionSheet: { backgroundColor: theme.raised, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, paddingBottom: 40 },
+  actionRow: { flexDirection: 'row', alignItems: 'center', gap: 16, minHeight: 52 },
   container: {
     flex: 1,
-    backgroundColor: '#F4F6F9',
-    paddingHorizontal: 14,
+    backgroundColor: theme.background,
+    paddingHorizontal: 20,
     paddingTop: 8,
   },
   containerDark: {
-    backgroundColor: '#090D16',
+    backgroundColor: theme.background,
   },
   textPrimaryDark: {
-    color: '#F8FAFC',
+    color: theme.text,
   },
   textSecondaryDark: {
-    color: '#94A3B8',
+    color: theme.muted,
   },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: 16,
+    flexWrap: 'wrap',
+    gap: 12,
   },
   headerLeftRow: {
     flexDirection: 'row',
@@ -1849,126 +1811,127 @@ const styles = StyleSheet.create({
     width: 34,
     height: 34,
     borderRadius: 12,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: theme.surface,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: '#E6EAF0',
-    shadowColor: '#0F172A',
+    borderColor: theme.border,
+    shadowColor: theme.surface,
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
+    shadowOpacity: 0,
     shadowRadius: 4,
-    elevation: 1,
+    elevation: 0,
   },
   backIconBtnDark: {
-    backgroundColor: '#1E293B',
-    borderColor: '#334155',
+    backgroundColor: theme.surface,
+    borderColor: theme.border,
   },
   headerTitle: {
-    fontSize: 16,
+    fontSize: 28,
     fontWeight: '800',
-    color: '#0F172A',
+    color: theme.text,
   },
   headerSubtitle: {
-    fontSize: 10.5,
-    color: '#64748B',
+    fontSize: 13,
+    color: theme.muted,
   },
   headerRightActions: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
+    flexWrap: 'wrap',
   },
   iconActionBtn: {
     width: 34,
     height: 34,
     borderRadius: 12,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: theme.surface,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: '#E6EAF0',
+    borderColor: theme.border,
   },
   iconActionBtnDark: {
-    backgroundColor: '#111827',
-    borderColor: '#1E293B',
+    backgroundColor: theme.surface,
+    borderColor: theme.border,
   },
   iconActionBtnActive: {
-    backgroundColor: '#2563EB',
-    borderColor: '#2563EB',
+    backgroundColor: theme.accent,
+    borderColor: theme.accent,
   },
   sortToggleBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: theme.surface,
     borderWidth: 1,
-    borderColor: '#E6EAF0',
+    borderColor: theme.border,
     paddingHorizontal: 10,
     height: 34,
     borderRadius: 12,
   },
   sortToggleBtnDark: {
-    backgroundColor: '#1E293B',
-    borderColor: '#334155',
+    backgroundColor: theme.surface,
+    borderColor: theme.border,
   },
   sortToggleBtnActive: {
-    backgroundColor: '#2563EB',
-    borderColor: '#2563EB',
+    backgroundColor: theme.accent,
+    borderColor: theme.accent,
   },
   sortToggleText: {
-    color: '#2563EB',
-    fontSize: 11,
+    color: theme.accent,
+    fontSize: 13,
     fontWeight: '700',
   },
   playAllCompactBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    backgroundColor: '#4F46E5',
+    backgroundColor: theme.accent,
     paddingHorizontal: 11,
     height: 34,
     borderRadius: 12,
-    shadowColor: '#4F46E5',
+    shadowColor: theme.accent,
     shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.2,
+    shadowOpacity: 0,
     shadowRadius: 5,
-    elevation: 2,
+    elevation: 0,
   },
   playAllCompactText: {
-    color: '#FFFFFF',
-    fontSize: 11.5,
+    color: theme.text,
+    fontSize: 13,
     fontWeight: '700',
   },
   refreshBtn: {
     width: 34,
     height: 34,
     borderRadius: 12,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: theme.surface,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: '#E6EAF0',
+    borderColor: theme.border,
   },
   inlineSearchBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: theme.surface,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#CBD5E1',
+    borderColor: theme.border,
     paddingHorizontal: 10,
-    height: 36,
-    marginBottom: 8,
+    height: 48,
+    marginBottom: 16,
     gap: 6,
   },
   inlineSearchBoxDark: {
-    backgroundColor: '#111827',
-    borderColor: '#334155',
+    backgroundColor: theme.surface,
+    borderColor: theme.border,
   },
   inlineSearchInput: {
     flex: 1,
-    fontSize: 12.5,
-    color: '#0F172A',
+    fontSize: 13,
+    color: theme.text,
     paddingVertical: 0,
   },
   sortSectionBox: {
@@ -1985,25 +1948,25 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 8,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: theme.surface,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: theme.border,
   },
   sortOptionChipDark: {
-    backgroundColor: '#111827',
-    borderColor: '#1E293B',
+    backgroundColor: theme.surface,
+    borderColor: theme.border,
   },
   sortOptionChipActive: {
-    backgroundColor: '#2563EB',
-    borderColor: '#2563EB',
+    backgroundColor: theme.accent,
+    borderColor: theme.accent,
   },
   sortOptionText: {
-    fontSize: 11,
+    fontSize: 13,
     fontWeight: '700',
-    color: '#475569',
+    color: theme.muted,
   },
   sortOptionTextActive: {
-    color: '#FFFFFF',
+    color: theme.onAccent,
   },
   filterRow: {
     flexDirection: 'row',
@@ -2018,33 +1981,33 @@ const styles = StyleSheet.create({
     gap: 4,
     paddingVertical: 6,
     borderRadius: 8,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: theme.surface,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: theme.border,
   },
   filterChipDark: {
-    backgroundColor: '#111827',
-    borderColor: '#1E293B',
+    backgroundColor: theme.surface,
+    borderColor: theme.border,
   },
   filterChipActive: {
-    backgroundColor: '#0284C7',
-    borderColor: '#0284C7',
+    backgroundColor: theme.accent,
+    borderColor: theme.accent,
   },
   filterChipActiveAudio: {
-    backgroundColor: '#4F46E5',
-    borderColor: '#4F46E5',
+    backgroundColor: theme.accent,
+    borderColor: theme.accent,
   },
   filterChipText: {
-    fontSize: 11.5,
+    fontSize: 13,
     fontWeight: '700',
-    color: '#475569',
+    color: theme.muted,
   },
   filterChipTextActive: {
-    color: '#FFFFFF',
+    color: theme.onAccent,
   },
   // Playlist (Çalma Listeleri) Stilleri
   playlistSectionWrapper: {
-    marginBottom: 8,
+    marginBottom: 16,
   },
   playlistScrollContent: {
     gap: 6,
@@ -2057,63 +2020,64 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: 14,
-    backgroundColor: '#EEF2FF',
+    backgroundColor: theme.accentSoft,
     borderWidth: 1,
-    borderColor: '#C7D2FE',
+    borderColor: theme.border,
   },
   newPlaylistBtnDark: {
-    backgroundColor: '#1E1B4B',
-    borderColor: '#3730A3',
+    backgroundColor: theme.accentSoft,
+    borderColor: theme.border,
   },
   newPlaylistBtnText: {
-    fontSize: 11,
+    fontSize: 13,
     fontWeight: '700',
-    color: '#4F46E5',
+    color: theme.accent,
   },
   playlistChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 10,
+    gap: 10,
+    paddingHorizontal: 12,
     paddingVertical: 5,
-    borderRadius: 14,
-    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    backgroundColor: theme.surface,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: theme.border,
+    minHeight: 68,
   },
   playlistChipDark: {
-    backgroundColor: '#111827',
-    borderColor: '#1E293B',
+    backgroundColor: theme.surface,
+    borderColor: theme.border,
   },
   playlistChipActive: {
-    backgroundColor: '#4F46E5',
-    borderColor: '#4F46E5',
+    backgroundColor: theme.accentSoft,
+    borderColor: theme.accent,
   },
   playlistChipText: {
-    fontSize: 11,
+    fontSize: 13,
     fontWeight: '600',
-    color: '#475569',
+    color: theme.muted,
     maxWidth: 140,
   },
   playlistChipTextActive: {
-    color: '#FFFFFF',
+    color: theme.accent,
     fontWeight: '700',
   },
   activePlaylistBanner: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#EEF2FF',
+    backgroundColor: theme.accentSoft,
     borderWidth: 1,
-    borderColor: '#C7D2FE',
+    borderColor: theme.border,
     borderRadius: 10,
     paddingHorizontal: 10,
     paddingVertical: 7,
     marginTop: 6,
   },
   activePlaylistBannerDark: {
-    backgroundColor: '#1E1B4B',
-    borderColor: '#3730A3',
+    backgroundColor: theme.accentSoft,
+    borderColor: theme.border,
   },
   activePlaylistInfo: {
     flexDirection: 'row',
@@ -2122,9 +2086,9 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   activePlaylistTitle: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '800',
-    color: '#1E1B4B',
+    color: theme.accent,
     flex: 1,
   },
   activePlaylistActions: {
@@ -2136,34 +2100,34 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    backgroundColor: '#4F46E5',
+    backgroundColor: theme.accent,
     paddingHorizontal: 9,
     paddingVertical: 5,
     borderRadius: 7,
   },
   plActionPlayText: {
-    color: '#FFFFFF',
-    fontSize: 11,
+    color: theme.onAccent,
+    fontSize: 13,
     fontWeight: '700',
   },
   plActionEditBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 3,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: theme.surface,
     borderWidth: 1,
-    borderColor: '#C7D2FE',
+    borderColor: theme.border,
     paddingHorizontal: 8,
     paddingVertical: 4.5,
     borderRadius: 7,
   },
   plActionEditBtnDark: {
-    backgroundColor: '#111827',
-    borderColor: '#3730A3',
+    backgroundColor: theme.surface,
+    borderColor: theme.border,
   },
   plActionEditText: {
-    color: '#4F46E5',
-    fontSize: 11,
+    color: theme.accent,
+    fontSize: 13,
     fontWeight: '700',
   },
   plActionDeleteBtn: {
@@ -2183,26 +2147,26 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: 14,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: theme.surface,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: theme.border,
   },
   artistChipDark: {
-    backgroundColor: '#111827',
-    borderColor: '#1E293B',
+    backgroundColor: theme.surface,
+    borderColor: theme.border,
   },
   artistChipActive: {
-    backgroundColor: '#0284C7',
-    borderColor: '#0284C7',
+    backgroundColor: theme.accent,
+    borderColor: theme.accent,
   },
   artistChipText: {
-    fontSize: 11,
+    fontSize: 13,
     fontWeight: '600',
-    color: '#475569',
+    color: theme.muted,
     maxWidth: 150,
   },
   artistChipTextActive: {
-    color: '#FFFFFF',
+    color: theme.onAccent,
     fontWeight: '700',
   },
   listContent: {
@@ -2212,30 +2176,31 @@ const styles = StyleSheet.create({
   compactCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 18,
-    paddingVertical: 9,
+    backgroundColor: theme.background,
+    borderRadius: 0,
+    paddingVertical: 12,
     paddingHorizontal: 11,
-    borderWidth: 1,
-    borderColor: '#E6EAF0',
+    borderWidth: 0,
+    borderColor: theme.border,
     gap: 10,
-    shadowColor: '#0F172A',
+    shadowColor: theme.surface,
     shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.04,
+    shadowOpacity: 0,
     shadowRadius: 8,
-    elevation: 2,
+    elevation: 0,
+    borderBottomWidth: 1,
   },
   compactCardDark: {
-    backgroundColor: '#111827',
-    borderColor: '#1E293B',
+    backgroundColor: theme.background,
+    borderColor: theme.border,
   },
   compactCardPlaying: {
-    borderColor: '#6366F1',
-    backgroundColor: '#F5F3FF',
+    borderColor: theme.accent,
+    backgroundColor: theme.accentSoft,
   },
   compactCardPlayingDark: {
-    borderColor: '#6366F1',
-    backgroundColor: '#1E1B4B',
+    borderColor: theme.accent,
+    backgroundColor: theme.accentSoft,
   },
   thumbWrapper: {
     position: 'relative',
@@ -2247,27 +2212,27 @@ const styles = StyleSheet.create({
   vinylThumbOuter: {
     width: 42,
     height: 42,
-    borderRadius: 21,
-    backgroundColor: '#111827',
-    padding: 3.5,
+    borderRadius: 10,
+    backgroundColor: theme.surface,
+    padding: 0,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1.5,
-    borderColor: '#374151',
+    borderWidth: 0,
+    borderColor: theme.border,
   },
   vinylThumbActiveBorder: {
-    borderColor: '#6366F1',
+    borderColor: theme.accent,
   },
   vinylThumbImage: {
     width: '100%',
     height: '100%',
-    borderRadius: 18,
+    borderRadius: 10,
   },
   vinylFallback: {
     width: '100%',
     height: '100%',
-    borderRadius: 18,
-    backgroundColor: '#4F46E5',
+    borderRadius: 16,
+    backgroundColor: theme.accent,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -2276,16 +2241,17 @@ const styles = StyleSheet.create({
     width: 9,
     height: 9,
     borderRadius: 4.5,
-    backgroundColor: '#111827',
+    backgroundColor: theme.surface,
     borderWidth: 1.5,
-    borderColor: '#E5E7EB',
+    borderColor: theme.border,
+    display: 'none',
   },
   videoThumbBox: {
     width: 44,
     height: 36,
     borderRadius: 7,
     overflow: 'hidden',
-    backgroundColor: '#0F172A',
+    backgroundColor: theme.surface,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -2296,7 +2262,7 @@ const styles = StyleSheet.create({
   videoFallback: {
     width: '100%',
     height: '100%',
-    backgroundColor: '#0284C7',
+    backgroundColor: theme.accent,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -2305,7 +2271,7 @@ const styles = StyleSheet.create({
     width: 18,
     height: 18,
     borderRadius: 9,
-    backgroundColor: 'rgba(0,0,0,0.55)',
+    backgroundColor: theme.surface,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -2317,10 +2283,10 @@ const styles = StyleSheet.create({
     paddingVertical: 1,
     borderRadius: 4,
     borderWidth: 1,
-    borderColor: '#FFFFFF',
+    borderColor: theme.border,
   },
   miniTypeBadgeText: {
-    color: '#FFFFFF',
+    color: theme.onAccent,
     fontSize: 8,
     fontWeight: '800',
   },
@@ -2329,16 +2295,16 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   titleText: {
-    fontSize: 12.5,
+    fontSize: 15,
     fontWeight: '700',
-    color: '#0F172A',
+    color: theme.text,
     marginBottom: 2,
   },
   titleTextPlaying: {
-    color: '#4338CA',
+    color: theme.accent,
   },
   titleTextPlayingDark: {
-    color: '#A5B4FC',
+    color: theme.accent,
   },
   subRow: {
     flexDirection: 'row',
@@ -2349,19 +2315,19 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 3,
-    backgroundColor: '#E0E7FF',
+    backgroundColor: theme.accentSoft,
     paddingHorizontal: 5,
     paddingVertical: 1,
     borderRadius: 4,
   },
   liveDotText: {
-    color: '#4338CA',
+    color: theme.accent,
     fontSize: 9,
     fontWeight: '700',
   },
   subtitleText: {
-    fontSize: 10.5,
-    color: '#64748B',
+    fontSize: 13,
+    color: theme.muted,
     flex: 1,
   },
   actionsCol: {
@@ -2370,30 +2336,30 @@ const styles = StyleSheet.create({
     gap: 5,
   },
   primaryCircleBtn: {
-    width: 32,
-    height: 32,
+    width: 44,
+    height: 44,
     borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#4F46E5',
+    shadowColor: theme.accent,
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
+    shadowOpacity: 0,
     shadowRadius: 4,
-    elevation: 2,
+    elevation: 0,
   },
   iconCircleBtn: {
-    width: 30,
-    height: 30,
+    width: 44,
+    height: 44,
     borderRadius: 11,
-    backgroundColor: '#F4F6F9',
+    backgroundColor: theme.surface,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: '#E6EAF0',
+    borderColor: theme.border,
   },
   iconCircleBtnDark: {
-    backgroundColor: '#1E293B',
-    borderColor: '#334155',
+    backgroundColor: theme.surface,
+    borderColor: theme.border,
   },
   emptyContainer: {
     flex: 1,
@@ -2404,13 +2370,13 @@ const styles = StyleSheet.create({
   emptyTitle: {
     fontSize: 15.5,
     fontWeight: '700',
-    color: '#0F172A',
+    color: theme.text,
     marginTop: 12,
     textAlign: 'center',
   },
   emptyText: {
-    fontSize: 12,
-    color: '#64748B',
+    fontSize: 13,
+    color: theme.muted,
     textAlign: 'center',
     marginTop: 5,
     lineHeight: 17,
@@ -2420,34 +2386,34 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: '#2563EB',
+    backgroundColor: theme.accent,
     paddingHorizontal: 15,
     paddingVertical: 9,
     borderRadius: 10,
   },
   goToDownloadText: {
-    color: '#FFFFFF',
+    color: theme.onAccent,
     fontSize: 13,
     fontWeight: '700',
   },
   // Playlist Modal Stilleri
   modalBackdrop: {
     flex: 1,
-    backgroundColor: 'rgba(9, 13, 22, 0.78)',
+    backgroundColor: theme.overlay,
     justifyContent: 'center',
     paddingHorizontal: 18,
   },
   playlistModalCard: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: theme.surface,
     borderRadius: 16,
     padding: 16,
     maxHeight: '82%',
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: theme.border,
   },
   playlistModalCardDark: {
-    backgroundColor: '#111827',
-    borderColor: '#1E293B',
+    backgroundColor: theme.surface,
+    borderColor: theme.border,
   },
   modalHeaderRow: {
     flexDirection: 'row',
@@ -2458,7 +2424,7 @@ const styles = StyleSheet.create({
   modalHeaderTitle: {
     fontSize: 15.5,
     fontWeight: '800',
-    color: '#0F172A',
+    color: theme.text,
     flex: 1,
   },
   modalCloseBtn: {
@@ -2468,30 +2434,30 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   modalInputLabel: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '700',
-    color: '#475569',
+    color: theme.muted,
     marginBottom: 6,
   },
   modalTextInput: {
     height: 42,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#CBD5E1',
-    backgroundColor: '#F8FAFC',
+    borderColor: theme.border,
+    backgroundColor: theme.surface,
     paddingHorizontal: 12,
     fontSize: 13.5,
-    color: '#0F172A',
+    color: theme.text,
   },
   modalTextInputDark: {
-    backgroundColor: '#0B0F19',
-    borderColor: '#334155',
-    color: '#F8FAFC',
+    backgroundColor: theme.surface,
+    borderColor: theme.border,
+    color: theme.text,
   },
   modalSectionSubtitle: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '700',
-    color: '#475569',
+    color: theme.muted,
     marginBottom: 8,
   },
   songSelectScroll: {
@@ -2506,33 +2472,33 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
-    backgroundColor: '#F8FAFC',
+    borderColor: theme.border,
+    backgroundColor: theme.surface,
     marginBottom: 6,
   },
   songSelectRowDark: {
-    backgroundColor: '#0B0F19',
-    borderColor: '#1E293B',
+    backgroundColor: theme.surface,
+    borderColor: theme.border,
   },
   songSelectRowActive: {
-    borderColor: '#6366F1',
-    backgroundColor: '#EEF2FF',
+    borderColor: theme.accent,
+    backgroundColor: theme.accentSoft,
   },
   songSelectRowActiveDark: {
-    borderColor: '#6366F1',
-    backgroundColor: '#1E1B4B',
+    borderColor: theme.accent,
+    backgroundColor: theme.accentSoft,
   },
   songSelectTextCol: {
     flex: 1,
   },
   songSelectTitle: {
-    fontSize: 12.5,
+    fontSize: 13,
     fontWeight: '700',
-    color: '#0F172A',
+    color: theme.text,
   },
   songSelectSub: {
-    fontSize: 11,
-    color: '#64748B',
+    fontSize: 13,
+    color: theme.muted,
     marginTop: 1,
   },
   modalPrimarySaveBtn: {
@@ -2540,19 +2506,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    backgroundColor: '#4F46E5',
+    backgroundColor: theme.accent,
     height: 42,
     borderRadius: 10,
   },
   modalPrimarySaveText: {
-    color: '#FFFFFF',
+    color: theme.onAccent,
     fontSize: 13.5,
     fontWeight: '700',
   },
   quickAddSongName: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '600',
-    color: '#475569',
+    color: theme.muted,
     marginBottom: 10,
   },
   noPlaylistYetBox: {
@@ -2560,8 +2526,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   noPlaylistYetText: {
-    fontSize: 12.5,
-    color: '#64748B',
+    fontSize: 13,
+    color: theme.muted,
   },
   quickAddBottomRow: {
     gap: 8,
@@ -2573,17 +2539,17 @@ const styles = StyleSheet.create({
     gap: 6,
     height: 38,
     borderRadius: 10,
-    backgroundColor: '#EEF2FF',
+    backgroundColor: theme.accentSoft,
     borderWidth: 1,
-    borderColor: '#C7D2FE',
+    borderColor: theme.border,
   },
   quickCreateNewBtnDark: {
-    backgroundColor: '#1E1B4B',
-    borderColor: '#3730A3',
+    backgroundColor: theme.accentSoft,
+    borderColor: theme.border,
   },
   quickCreateNewText: {
-    color: '#4F46E5',
-    fontSize: 12.5,
+    color: theme.accent,
+    fontSize: 13,
     fontWeight: '700',
   },
   trimPresetRow: {
@@ -2595,24 +2561,24 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingVertical: 7,
     borderRadius: 8,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: theme.surface,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: theme.border,
     alignItems: 'center',
     justifyContent: 'center',
   },
   trimPresetChipDark: {
-    backgroundColor: '#0B0F19',
-    borderColor: '#1E293B',
+    backgroundColor: theme.surface,
+    borderColor: theme.border,
   },
   trimPresetChipActive: {
-    backgroundColor: '#D97706',
-    borderColor: '#D97706',
+    backgroundColor: theme.accent,
+    borderColor: theme.accent,
   },
   trimPresetChipText: {
-    fontSize: 10.5,
+    fontSize: 13,
     fontWeight: '700',
-    color: '#475569',
+    color: theme.muted,
   },
   trimInputsRow: {
     flexDirection: 'row',
@@ -2620,3 +2586,6 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
 });
+
+const lightStyles = createStyles(lightTheme);
+const darkStyles = createStyles(darkTheme);

@@ -1,4 +1,4 @@
-# Mobil Media Toolkit
+# Media Toolkit
 
 Android cihazlar için geliştirilmiş, harici bir sunucuya ihtiyaç duymadan doğrudan telefon üzerinde çalışan açık kaynaklı YouTube medya indirici, arka plan müzik çalar ve video oynatıcı uygulaması.
 

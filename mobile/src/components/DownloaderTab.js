@@ -1,3 +1,4 @@
+import { getTheme, lightTheme, darkTheme } from '../theme';
 import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
@@ -39,6 +40,8 @@ export default function DownloaderTab({
   onOpenExpandedPlayer,
   onSwitchToHistory,
 }) {
+  const theme = getTheme(isDarkMode);
+  const styles = isDarkMode ? darkStyles : lightStyles;
   const [queryOrUrl, setQueryOrUrl] = useState('');
   const [loadingInfo, setLoadingInfo] = useState(false);
   const [quickLinkDownloading, setQuickLinkDownloading] = useState(false);
@@ -58,7 +61,7 @@ export default function DownloaderTab({
   // İndirmeden Önce Şarkı Önizleme (Dinleme) Durumu
   const [previewLoadingUrl, setPreviewLoadingUrl] = useState(null);
 
-  // İndirme Kuyruğu & İlerleme Durumu
+  // İndirme sırası & İlerleme Durumu
   const [queueState, setQueueState] = useState(() => getDownloadQueueState());
   const [savingTaskId, setSavingTaskId] = useState(null);
   const pollTimerRef = useRef(null);
@@ -86,7 +89,6 @@ export default function DownloaderTab({
       .then((enabled) => setWifiOnly(Boolean(enabled)))
       .catch(() => {});
 
-    syncQueueState();
     pollTimerRef.current = setInterval(() => {
       syncQueueState();
     }, 450);
@@ -227,7 +229,7 @@ export default function DownloaderTab({
     syncQueueState();
     if (addedCount > 0) {
       Alert.alert(
-        'Kuyruğa Eklendi',
+        'Sıraya eklendi',
         `${addedCount} parça (${activePreset.shortLabel}) indirme sırasına eklendi.`
       );
     }
@@ -393,6 +395,112 @@ export default function DownloaderTab({
       showsVerticalScrollIndicator={false}
       keyboardShouldPersistTaps="handled"
     >
+      <Text style={styles.pageTitle}>İndir</Text>
+      {/* Arama Motoru & URL Giriş Kartı */}
+      <View style={[styles.card, isDarkMode && styles.cardDark]}>
+        <Text style={[styles.inputLabel, isDarkMode && styles.textPrimaryDark]}>
+          Şarkı veya video bul
+        </Text>
+        <View style={[styles.inputWrapper, isDarkMode && styles.inputWrapperDark]}>
+          <Ionicons
+            name="search-outline"
+            size={20}
+            color={theme.accent}
+            style={styles.linkIcon}
+          />
+          <TextInput
+            ref={urlInputRef}
+            style={[styles.textInput, isDarkMode && styles.textPrimaryDark]}
+            placeholder="Şarkı adı veya YouTube bağlantısı"
+            placeholderTextColor={theme.muted}
+            value={queryOrUrl}
+            onChangeText={(txt) => {
+              setQueryOrUrl(txt);
+              if (errorMsg) setErrorMsg('');
+            }}
+            onSubmitEditing={handleSearchOrFetch}
+            returnKeyType="search"
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+          {queryOrUrl.length > 0 && (
+            <TouchableOpacity
+              onPress={() => {
+                setQueryOrUrl('');
+                setSearchResults([]);
+                setVideoInfo(null);
+                setPlaylistInfo(null);
+              }}
+              style={styles.clearBtn}
+            >
+              <Ionicons name="close-circle" size={18} color={theme.muted} />
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {/* Butonlar: Yapıştır | Ara / Analiz Et | (Link ise) Tek Tıkla İndir */}
+        <View style={styles.inputButtonsRow}>
+          <TouchableOpacity
+            style={[styles.pasteBtn, isDarkMode && styles.pasteBtnDark]}
+            onPress={handlePaste}
+          >
+            <Ionicons
+              name="clipboard-outline"
+              size={15}
+              color={theme.text}
+            />
+            <Text style={[styles.pasteBtnText, isDarkMode && styles.textPrimaryDark]}>
+              Yapıştır
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.fetchBtn, loadingInfo && { opacity: 0.7 }]}
+            onPress={handleSearchOrFetch}
+            disabled={loadingInfo}
+          >
+            {loadingInfo ? (
+              <ActivityIndicator size="small" color={theme.onAccent} />
+            ) : (
+              <>
+                <Ionicons name="search" size={15} color={theme.onAccent} />
+                <Text style={styles.fetchBtnText}>
+                  {isUrlInput ? 'Detaylar' : "Ara"}
+                </Text>
+              </>
+            )}
+          </TouchableOpacity>
+
+          {isUrlInput && (
+            <TouchableOpacity
+              style={[
+                styles.directDownloadBtn,
+                quickLinkDownloading && { opacity: 0.7 },
+              ]}
+              onPress={handleDirectLinkDownload}
+              disabled={quickLinkDownloading}
+            >
+              {quickLinkDownloading ? (
+                <ActivityIndicator size="small" color={theme.onAccent} />
+              ) : (
+                <>
+                  <Ionicons name="download-outline" size={16} color={theme.onAccent} />
+                  <Text style={styles.directDownloadBtnText}>Hemen İndir</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {/* Hata Mesajı */}
+        {errorMsg ? (
+          <View style={[styles.errorBox, isDarkMode && styles.errorBoxDark]}>
+            <Ionicons name="alert-circle" size={18} color={theme.danger} />
+            <Text style={styles.errorText}>{errorMsg}</Text>
+          </View>
+        ) : null}
+      </View>
+
       {/* ÜST AÇILIR/KAPANIR OTOMATİK İNDİRME FORMATI SEÇİCİSİ & WI-FI KİLİDİ */}
       <View style={[styles.presetCard, isDarkMode && styles.cardDark]}>
         <View style={styles.presetHeaderRow}>
@@ -404,10 +512,10 @@ export default function DownloaderTab({
             <Ionicons
               name="flash"
               size={15}
-              color={isDarkMode ? '#60A5FA' : '#2563EB'}
+              color={theme.accent}
             />
             <Text style={[styles.presetHeaderTitle, isDarkMode && styles.textPrimaryDark]}>
-              İndirme Şekli
+              İndirme tercihleri
             </Text>
           </TouchableOpacity>
 
@@ -427,17 +535,17 @@ export default function DownloaderTab({
                 size={13}
                 color={
                   wifiOnly
-                    ? '#FFFFFF'
+                    ? theme.onAccent
                     : isDarkMode
-                    ? '#94A3B8'
-                    : '#475569'
+                    ? theme.muted
+                    : theme.muted
                 }
               />
               <Text
                 style={[
                   styles.wifiToggleText,
                   isDarkMode && styles.textSecondaryDark,
-                  wifiOnly && { color: '#FFFFFF' },
+                  wifiOnly && { color: theme.onAccent },
                 ]}
               >
                 Wi-Fi
@@ -454,14 +562,14 @@ export default function DownloaderTab({
               activeOpacity={0.8}
               onPress={() => setPresetMenuOpen((prev) => !prev)}
             >
-              <Ionicons name={activePreset.icon} size={13} color="#FFFFFF" />
+              <Ionicons name={activePreset.icon} size={13} color={theme.onAccent} />
               <Text style={styles.presetSelectedBadgeText} numberOfLines={1}>
                 {activePreset.fullLabel}
               </Text>
               <Ionicons
                 name={presetMenuOpen ? 'chevron-up' : 'chevron-down'}
                 size={14}
-                color="#FFFFFF"
+                color={theme.onAccent}
               />
             </TouchableOpacity>
           </View>
@@ -498,12 +606,12 @@ export default function DownloaderTab({
                         {
                           backgroundColor: isAudioPreset
                             ? isSelected
-                              ? '#4F46E5'
+                              ? theme.accent
                               : isDarkMode
-                              ? '#1E1B4B'
-                              : '#EEF2FF'
+                              ? theme.accent
+                              : theme.accent
                             : isSelected
-                            ? '#0284C7'
+                            ? theme.accent
                             : isDarkMode
                             ? '#0C4A6E'
                             : '#E0F2FE',
@@ -515,14 +623,14 @@ export default function DownloaderTab({
                         size={15}
                         color={
                           isSelected
-                            ? '#FFFFFF'
+                            ? theme.onAccent
                             : isAudioPreset
                             ? isDarkMode
-                              ? '#A5B4FC'
-                              : '#4F46E5'
+                              ? theme.accent
+                              : theme.accent
                             : isDarkMode
-                            ? '#38BDF8'
-                            : '#0284C7'
+                            ? theme.accent
+                            : theme.accent
                         }
                       />
                     </View>
@@ -546,9 +654,9 @@ export default function DownloaderTab({
                     color={
                       isSelected
                         ? isDarkMode
-                          ? '#60A5FA'
-                          : '#2563EB'
-                        : '#94A3B8'
+                          ? theme.accent
+                          : theme.accent
+                        : theme.muted
                     }
                   />
                 </TouchableOpacity>
@@ -558,110 +666,6 @@ export default function DownloaderTab({
         )}
       </View>
 
-      {/* Arama Motoru & URL Giriş Kartı */}
-      <View style={[styles.card, isDarkMode && styles.cardDark]}>
-        <Text style={[styles.inputLabel, isDarkMode && styles.textPrimaryDark]}>
-          YouTube'da Şarkı / Video Ara veya Link Yapıştır
-        </Text>
-        <View style={[styles.inputWrapper, isDarkMode && styles.inputWrapperDark]}>
-          <Ionicons
-            name="search-outline"
-            size={20}
-            color={isDarkMode ? '#60A5FA' : '#2563EB'}
-            style={styles.linkIcon}
-          />
-          <TextInput
-            ref={urlInputRef}
-            style={[styles.textInput, isDarkMode && styles.textPrimaryDark]}
-            placeholder="Şarkı/sanatçı adı yazın veya link yapıştırın..."
-            placeholderTextColor="#64748B"
-            value={queryOrUrl}
-            onChangeText={(txt) => {
-              setQueryOrUrl(txt);
-              if (errorMsg) setErrorMsg('');
-            }}
-            onSubmitEditing={handleSearchOrFetch}
-            returnKeyType="search"
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
-          {queryOrUrl.length > 0 && (
-            <TouchableOpacity
-              onPress={() => {
-                setQueryOrUrl('');
-                setSearchResults([]);
-                setVideoInfo(null);
-                setPlaylistInfo(null);
-              }}
-              style={styles.clearBtn}
-            >
-              <Ionicons name="close-circle" size={18} color="#94A3B8" />
-            </TouchableOpacity>
-          )}
-        </View>
-
-        {/* Butonlar: Yapıştır | Ara / Analiz Et | (Link ise) Tek Tıkla İndir */}
-        <View style={styles.inputButtonsRow}>
-          <TouchableOpacity
-            style={[styles.pasteBtn, isDarkMode && styles.pasteBtnDark]}
-            onPress={handlePaste}
-          >
-            <Ionicons
-              name="clipboard-outline"
-              size={15}
-              color={isDarkMode ? '#E2E8F0' : '#334155'}
-            />
-            <Text style={[styles.pasteBtnText, isDarkMode && styles.textPrimaryDark]}>
-              Yapıştır
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.fetchBtn, loadingInfo && { opacity: 0.7 }]}
-            onPress={handleSearchOrFetch}
-            disabled={loadingInfo}
-          >
-            {loadingInfo ? (
-              <ActivityIndicator size="small" color="#FFFFFF" />
-            ) : (
-              <>
-                <Ionicons name="search" size={15} color="#FFFFFF" />
-                <Text style={styles.fetchBtnText}>
-                  {isUrlInput ? 'Önizle / Detay' : "YouTube'da Ara"}
-                </Text>
-              </>
-            )}
-          </TouchableOpacity>
-
-          {isUrlInput && (
-            <TouchableOpacity
-              style={[
-                styles.directDownloadBtn,
-                quickLinkDownloading && { opacity: 0.7 },
-              ]}
-              onPress={handleDirectLinkDownload}
-              disabled={quickLinkDownloading}
-            >
-              {quickLinkDownloading ? (
-                <ActivityIndicator size="small" color="#FFFFFF" />
-              ) : (
-                <>
-                  <Ionicons name="download-outline" size={16} color="#FFFFFF" />
-                  <Text style={styles.directDownloadBtnText}>Hemen İndir</Text>
-                </>
-              )}
-            </TouchableOpacity>
-          )}
-        </View>
-
-        {/* Hata Mesajı */}
-        {errorMsg ? (
-          <View style={[styles.errorBox, isDarkMode && styles.errorBoxDark]}>
-            <Ionicons name="alert-circle" size={18} color="#EF4444" />
-            <Text style={styles.errorText}>{errorMsg}</Text>
-          </View>
-        ) : null}
-      </View>
 
       {/* Toplu YouTube Playlist / Albüm İndirme Kartı */}
       {playlistInfo && (
@@ -669,7 +673,7 @@ export default function DownloaderTab({
           <View style={styles.playlistBatchHeader}>
             <View style={{ flex: 1 }}>
               <View style={styles.searchHeaderLeft}>
-                <Ionicons name="albums-outline" size={18} color="#4F46E5" />
+                <Ionicons name="albums-outline" size={18} color={theme.accent} />
                 <Text
                   style={[styles.searchResultsTitle, isDarkMode && styles.textPrimaryDark]}
                   numberOfLines={1}
@@ -689,9 +693,9 @@ export default function DownloaderTab({
             style={styles.queueAllPlaylistBtn}
             onPress={handleQueueAllPlaylistItems}
           >
-            <Ionicons name="layers-outline" size={18} color="#FFFFFF" />
+            <Ionicons name="layers-outline" size={18} color={theme.onAccent} />
             <Text style={styles.queueAllPlaylistBtnText}>
-              Tümünü Seçili Formatla Kuyruğa Ekle ({playlistInfo.itemCount} Parça • {activePreset.shortLabel})
+              Tümünü sıraya ekle ({playlistInfo.itemCount})
             </Text>
           </TouchableOpacity>
 
@@ -726,7 +730,7 @@ export default function DownloaderTab({
                         />
                       ) : (
                         <View style={styles.searchThumbFallback}>
-                          <Ionicons name="musical-notes" size={16} color="#FFFFFF" />
+                          <Ionicons name="musical-notes" size={16} color={theme.onAccent} />
                         </View>
                       )}
                       {item.duration ? (
@@ -769,7 +773,7 @@ export default function DownloaderTab({
                       disabled={isPreviewLoading}
                     >
                       {isPreviewLoading ? (
-                        <ActivityIndicator size="small" color="#4F46E5" />
+                        <ActivityIndicator size="small" color={theme.accent} />
                       ) : (
                         <>
                           <Ionicons
@@ -777,20 +781,20 @@ export default function DownloaderTab({
                             size={14}
                             color={
                               isItemPreviewActive
-                                ? '#FFFFFF'
+                                ? theme.onAccent
                                 : isDarkMode
-                                ? '#A5B4FC'
-                                : '#4F46E5'
+                                ? theme.accent
+                                : theme.accent
                             }
                           />
                           <Text
                             style={[
                               styles.previewListenBtnText,
-                              isDarkMode && { color: '#A5B4FC' },
-                              isItemPreviewActive && { color: '#FFFFFF' },
+                              isDarkMode && { color: theme.accent },
+                              isItemPreviewActive && { color: theme.onAccent },
                             ]}
                           >
-                            {isItemPreviewPlaying ? 'Durdur' : 'Dinle'}
+                            {isItemPreviewPlaying ? 'Durdur' : 'Ön dinle'}
                           </Text>
                         </>
                       )}
@@ -807,7 +811,7 @@ export default function DownloaderTab({
                       <Ionicons
                         name={existingQueueTask ? 'time-outline' : 'download-outline'}
                         size={15}
-                        color="#FFFFFF"
+                        color={theme.onAccent}
                       />
                       <Text style={styles.oneTapDownloadBtnText}>
                         {existingQueueTask ? 'Sırada' : 'İndir'}
@@ -826,13 +830,13 @@ export default function DownloaderTab({
         <View style={[styles.card, isDarkMode && styles.cardDark]}>
           <View style={styles.searchResultsHeader}>
             <View style={styles.searchHeaderLeft}>
-              <Ionicons name="logo-youtube" size={18} color="#EF4444" />
+              <Ionicons name="logo-youtube" size={18} color={theme.danger} />
               <Text style={[styles.searchResultsTitle, isDarkMode && styles.textPrimaryDark]}>
                 Arama Sonuçları ({searchResults.length})
               </Text>
             </View>
             <Text style={[styles.searchResultsHint, isDarkMode && styles.textSecondaryDark]}>
-              Dinle veya tek tıkla indir ({activePreset.shortLabel})
+              {activePreset.shortLabel}
             </Text>
           </View>
 
@@ -877,7 +881,7 @@ export default function DownloaderTab({
                         />
                       ) : (
                         <View style={styles.searchThumbFallback}>
-                          <Ionicons name="play" size={18} color="#FFFFFF" />
+                          <Ionicons name="play" size={18} color={theme.onAccent} />
                         </View>
                       )}
                       {item.duration ? (
@@ -924,7 +928,7 @@ export default function DownloaderTab({
                       {isPreviewLoading ? (
                         <ActivityIndicator
                           size="small"
-                          color={isItemPreviewActive ? '#FFFFFF' : '#4F46E5'}
+                          color={isItemPreviewActive ? theme.onAccent : theme.accent}
                         />
                       ) : (
                         <>
@@ -939,20 +943,20 @@ export default function DownloaderTab({
                             size={14}
                             color={
                               isItemPreviewActive
-                                ? '#FFFFFF'
+                                ? theme.onAccent
                                 : isDarkMode
-                                ? '#A5B4FC'
-                                : '#4F46E5'
+                                ? theme.accent
+                                : theme.accent
                             }
                           />
                           <Text
                             style={[
                               styles.previewListenBtnText,
-                              isDarkMode && { color: '#A5B4FC' },
-                              isItemPreviewActive && { color: '#FFFFFF' },
+                              isDarkMode && { color: theme.accent },
+                              isItemPreviewActive && { color: theme.onAccent },
                             ]}
                           >
-                            {isItemPreviewPlaying ? 'Durdur' : 'Dinle'}
+                            {isItemPreviewPlaying ? 'Durdur' : 'Ön dinle'}
                           </Text>
                         </>
                       )}
@@ -975,7 +979,7 @@ export default function DownloaderTab({
                             : 'videocam-outline'
                         }
                         size={15}
-                        color="#FFFFFF"
+                        color={theme.onAccent}
                       />
                       <Text style={styles.oneTapDownloadBtnText}>
                         {existingQueueTask ? 'Sırada' : 'İndir'}
@@ -1000,12 +1004,12 @@ export default function DownloaderTab({
               <Ionicons
                 name="arrow-back"
                 size={15}
-                color={isDarkMode ? '#60A5FA' : '#2563EB'}
+                color={theme.accent}
               />
               <Text
                 style={[
                   styles.backToSearchText,
-                  isDarkMode && { color: '#60A5FA' },
+                  isDarkMode && { color: theme.accent },
                 ]}
               >
                 Arama Sonuçlarına Dön ({searchResults.length})
@@ -1035,7 +1039,7 @@ export default function DownloaderTab({
                 {videoInfo.title}
               </Text>
               <View style={styles.channelRow}>
-                <Ionicons name="person-circle-outline" size={14} color="#94A3B8" />
+                <Ionicons name="person-circle-outline" size={14} color={theme.muted} />
                 <Text
                   style={[styles.channelText, isDarkMode && styles.textSecondaryDark]}
                   numberOfLines={1}
@@ -1045,7 +1049,7 @@ export default function DownloaderTab({
               </View>
               {videoInfo.view_count ? (
                 <View style={styles.viewsRow}>
-                  <Ionicons name="eye-outline" size={14} color="#64748B" />
+                  <Ionicons name="eye-outline" size={14} color={theme.muted} />
                   <Text style={styles.viewsText}>{videoInfo.view_count} görüntüleme</Text>
                 </View>
               ) : null}
@@ -1072,7 +1076,7 @@ export default function DownloaderTab({
             {previewLoadingUrl === currentPreviewUrl ? (
               <ActivityIndicator
                 size="small"
-                color={isCurrentVideoPreviewing ? '#FFFFFF' : '#4F46E5'}
+                color={isCurrentVideoPreviewing ? theme.onAccent : theme.accent}
               />
             ) : (
               <>
@@ -1085,24 +1089,24 @@ export default function DownloaderTab({
                   size={18}
                   color={
                     isCurrentVideoPreviewing
-                      ? '#FFFFFF'
+                      ? theme.onAccent
                       : isDarkMode
-                      ? '#A5B4FC'
-                      : '#4F46E5'
+                      ? theme.accent
+                      : theme.accent
                   }
                 />
                 <Text
                   style={[
                     styles.detailPreviewListenText,
-                    isDarkMode && { color: '#A5B4FC' },
-                    isCurrentVideoPreviewing && { color: '#FFFFFF' },
+                    isDarkMode && { color: theme.accent },
+                    isCurrentVideoPreviewing && { color: theme.onAccent },
                   ]}
                 >
                   {isCurrentVideoPreviewPlaying
                     ? 'Önizleme Çalıyor (Duraklatmak İçin Dokun)'
                     : isCurrentVideoPreviewing
                     ? 'Önizlemeye Devam Et'
-                    : 'İndirmeden Önce Şarkıyı Dinle (Kontrol Et)'}
+                    : 'Ön dinle'}
                 </Text>
               </>
             )}
@@ -1131,7 +1135,7 @@ export default function DownloaderTab({
               <Ionicons
                 name="musical-notes"
                 size={18}
-                color={mediaType === 'm4a' ? '#FFFFFF' : '#94A3B8'}
+                color={mediaType === 'm4a' ? theme.onAccent : theme.muted}
               />
               <Text
                 style={[
@@ -1157,7 +1161,7 @@ export default function DownloaderTab({
               <Ionicons
                 name="videocam"
                 size={18}
-                color={mediaType === 'mp4' ? '#FFFFFF' : '#94A3B8'}
+                color={mediaType === 'mp4' ? theme.onAccent : theme.muted}
               />
               <Text
                 style={[
@@ -1199,9 +1203,9 @@ export default function DownloaderTab({
                     color={
                       isSelected
                         ? isDarkMode
-                          ? '#60A5FA'
-                          : '#2563EB'
-                        : '#94A3B8'
+                          ? theme.accent
+                          : theme.accent
+                        : theme.muted
                     }
                   />
                   <Text
@@ -1235,7 +1239,7 @@ export default function DownloaderTab({
                   : 'download'
               }
               size={20}
-              color="#FFFFFF"
+              color={theme.onAccent}
             />
             <Text style={styles.downloadActionBtnText}>
               {queueState.isBusy
@@ -1258,10 +1262,10 @@ export default function DownloaderTab({
               <Ionicons
                 name="layers-outline"
                 size={18}
-                color={isDarkMode ? '#60A5FA' : '#2563EB'}
+                color={theme.accent}
               />
               <Text style={[styles.queueSectionTitle, isDarkMode && styles.textPrimaryDark]}>
-                İndirme Kuyruğu ({queueState.tasks.length})
+                İndirme sırası ({queueState.tasks.length})
               </Text>
               {queueState.queuedCount > 0 && (
                 <View style={styles.waitingCountBadge}>
@@ -1303,7 +1307,7 @@ export default function DownloaderTab({
                         style={[
                           styles.typeBadge,
                           {
-                            backgroundColor: isAudio ? '#4F46E5' : '#0284C7',
+                            backgroundColor: theme.accent,
                           },
                         ]}
                       >
@@ -1322,7 +1326,7 @@ export default function DownloaderTab({
                     {task.status === 'queued' ? (
                       <View style={styles.queuedRightAction}>
                         <View style={styles.queueOrderPill}>
-                          <Ionicons name="time-outline" size={12} color="#D97706" />
+                          <Ionicons name="time-outline" size={12} color={theme.accent} />
                           <Text style={styles.queueOrderPillText}>
                             {task.queuePosition > 0
                               ? `${task.queuePosition}. Sırada`
@@ -1333,7 +1337,7 @@ export default function DownloaderTab({
                           style={styles.cancelQueueBtn}
                           onPress={() => handleCancelQueued(task.id)}
                         >
-                          <Ionicons name="close-circle" size={19} color="#EF4444" />
+                          <Ionicons name="close-circle" size={19} color={theme.danger} />
                         </TouchableOpacity>
                       </View>
                     ) : (
@@ -1354,8 +1358,8 @@ export default function DownloaderTab({
                         {
                           width: `${Math.min(100, Math.max(0, task.progress || 0))}%`,
                         },
-                        task.status === 'completed' && { backgroundColor: '#10B981' },
-                        task.status === 'failed' && { backgroundColor: '#EF4444' },
+                        task.status === 'completed' && { backgroundColor: theme.accent },
+                        task.status === 'failed' && { backgroundColor: theme.danger },
                       ]}
                     />
                   </View>
@@ -1376,12 +1380,12 @@ export default function DownloaderTab({
                         size={14}
                         color={
                           task.status === 'completed'
-                            ? '#10B981'
+                            ? theme.accent
                             : task.status === 'failed'
-                            ? '#EF4444'
+                            ? theme.danger
                             : task.status === 'queued'
-                            ? '#D97706'
-                            : '#2563EB'
+                            ? theme.accent
+                            : theme.accent
                         }
                       />
                       <Text
@@ -1397,7 +1401,7 @@ export default function DownloaderTab({
                           `İndiriliyor ${task.speed ? '(' + task.speed + ')' : ''}`}
                         {task.status === 'processing' && 'Birleştiriliyor...'}
                         {task.status === 'completed' &&
-                          'İndirilenler listesine kaydedildi'}
+                          'Arşiv listesine kaydedildi'}
                         {task.status === 'failed' &&
                           (task.error || 'İndirme başarısız oldu')}
                       </Text>
@@ -1408,7 +1412,7 @@ export default function DownloaderTab({
                     ) : null}
                   </View>
 
-                  {/* Tamamlandıysa: Dosyayı Aç / Paylaş ve İndirilenlere Git */}
+                  {/* Tamamlandıysa: Dosyayı Aç / Paylaş ve Arşive Git */}
                   {task.status === 'completed' && (
                     <View
                       style={[
@@ -1422,13 +1426,13 @@ export default function DownloaderTab({
                         disabled={isSavingThis}
                       >
                         {isSavingThis ? (
-                          <ActivityIndicator size="small" color="#FFFFFF" />
+                          <ActivityIndicator size="small" color={theme.onAccent} />
                         ) : (
                           <>
                             <Ionicons
                               name="play-circle-outline"
                               size={17}
-                              color="#FFFFFF"
+                              color={theme.onAccent}
                             />
                             <Text style={styles.saveFileBtnText}>
                               Dosyayı Aç / Paylaş
@@ -1447,15 +1451,15 @@ export default function DownloaderTab({
                         <Ionicons
                           name="folder-open-outline"
                           size={15}
-                          color={isDarkMode ? '#60A5FA' : '#2563EB'}
+                          color={theme.accent}
                         />
                         <Text
                           style={[
                             styles.historyShortcutText,
-                            isDarkMode && { color: '#60A5FA' },
+                            isDarkMode && { color: theme.accent },
                           ]}
                         >
-                          İndirilenlere Git & Oynat
+                          Arşive Git & Oynat
                         </Text>
                       </TouchableOpacity>
                     </View>
@@ -1470,39 +1474,40 @@ export default function DownloaderTab({
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (theme) => StyleSheet.create({
+  pageTitle: { fontSize: 28, fontWeight: "700", color: theme.text, marginBottom: 16 },
   container: {
     flex: 1,
-    backgroundColor: '#F4F6F9',
+    backgroundColor: theme.background,
   },
   containerDark: {
-    backgroundColor: '#090D16',
+    backgroundColor: theme.background,
   },
   contentContainer: {
-    paddingHorizontal: 14,
+    paddingHorizontal: 20,
     paddingTop: 8,
     paddingBottom: 24,
   },
   textPrimaryDark: {
-    color: '#F8FAFC',
+    color: theme.text,
   },
   textSecondaryDark: {
-    color: '#94A3B8',
+    color: theme.muted,
   },
   // Üst Açılır/Kapanır Bento İndirme Formatı Seçici Stilleri
   presetCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 22,
+    backgroundColor: theme.surface,
+    borderRadius: 16,
     paddingHorizontal: 14,
     paddingVertical: 12,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: '#E6EAF0',
-    shadowColor: '#0F172A',
+    borderColor: theme.border,
+    shadowColor: theme.surface,
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.04,
+    shadowOpacity: 0,
     shadowRadius: 10,
-    elevation: 2,
+    elevation: 0,
   },
   presetHeaderRow: {
     flexDirection: 'row',
@@ -1517,7 +1522,7 @@ const styles = StyleSheet.create({
   presetHeaderTitle: {
     fontSize: 13,
     fontWeight: '800',
-    color: '#0F172A',
+    color: theme.text,
   },
   presetHeaderRightGroup: {
     flexDirection: 'row',
@@ -1531,22 +1536,22 @@ const styles = StyleSheet.create({
     paddingHorizontal: 9,
     paddingVertical: 6,
     borderRadius: 10,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: theme.surface,
     borderWidth: 1,
-    borderColor: '#CBD5E1',
+    borderColor: theme.border,
   },
   wifiTogglePillDark: {
-    backgroundColor: '#1E293B',
-    borderColor: '#334155',
+    backgroundColor: theme.surface,
+    borderColor: theme.border,
   },
   wifiTogglePillActive: {
-    backgroundColor: '#059669',
-    borderColor: '#059669',
+    backgroundColor: theme.accent,
+    borderColor: theme.accent,
   },
   wifiToggleText: {
-    fontSize: 11,
+    fontSize: 13,
     fontWeight: '700',
-    color: '#475569',
+    color: theme.muted,
   },
   playlistBatchHeader: {
     flexDirection: 'row',
@@ -1559,14 +1564,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 7,
-    backgroundColor: '#4F46E5',
+    backgroundColor: theme.accent,
     height: 42,
     borderRadius: 11,
     paddingHorizontal: 12,
   },
   queueAllPlaylistBtnText: {
-    color: '#FFFFFF',
-    fontSize: 12.5,
+    color: theme.onAccent,
+    fontSize: 13,
     fontWeight: '700',
   },
   presetSelectedBadge: {
@@ -1578,25 +1583,25 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   presetSelectedBadgeAudio: {
-    backgroundColor: '#4F46E5',
+    backgroundColor: theme.accent,
   },
   presetSelectedBadgeVideo: {
-    backgroundColor: '#0284C7',
+    backgroundColor: theme.accent,
   },
   presetSelectedBadgeText: {
-    fontSize: 11.5,
+    fontSize: 13,
     fontWeight: '700',
-    color: '#FFFFFF',
+    color: theme.onAccent,
   },
   presetDropdownList: {
     marginTop: 10,
     paddingTop: 10,
     borderTopWidth: 1,
-    borderTopColor: '#E2E8F0',
+    borderTopColor: theme.border,
     gap: 7,
   },
   presetDropdownListDark: {
-    borderTopColor: '#1E293B',
+    borderTopColor: theme.border,
   },
   presetDropdownItem: {
     flexDirection: 'row',
@@ -1605,21 +1610,21 @@ const styles = StyleSheet.create({
     paddingVertical: 9,
     paddingHorizontal: 11,
     borderRadius: 10,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: theme.surface,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: theme.border,
   },
   presetDropdownItemDark: {
-    backgroundColor: '#0B0F19',
-    borderColor: '#1E293B',
+    backgroundColor: theme.surface,
+    borderColor: theme.border,
   },
   presetDropdownItemActive: {
-    backgroundColor: '#EFF6FF',
-    borderColor: '#3B82F6',
+    backgroundColor: theme.accentSoft,
+    borderColor: theme.accent,
   },
   presetDropdownItemActiveDark: {
-    backgroundColor: '#1E293B',
-    borderColor: '#3B82F6',
+    backgroundColor: theme.surface,
+    borderColor: theme.accent,
   },
   presetDropdownItemLeft: {
     flexDirection: 'row',
@@ -1635,46 +1640,47 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   presetDropdownItemText: {
-    fontSize: 12.5,
+    fontSize: 13,
     fontWeight: '600',
-    color: '#334155',
+    color: theme.text,
     flex: 1,
   },
   card: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 22,
-    padding: 15,
-    marginBottom: 14,
-    borderWidth: 1,
-    borderColor: '#E6EAF0',
-    shadowColor: '#0F172A',
+    backgroundColor: theme.background,
+    borderRadius: 16,
+    padding: 0,
+    marginBottom: 20,
+    borderWidth: 0,
+    borderColor: theme.border,
+    shadowColor: theme.surface,
     shadowOffset: { width: 0, height: 5 },
-    shadowOpacity: 0.05,
+    shadowOpacity: 0,
     shadowRadius: 12,
-    elevation: 3,
+    elevation: 0,
   },
   cardDark: {
-    backgroundColor: '#111827',
-    borderColor: '#1E293B',
+    backgroundColor: theme.background,
+    borderColor: theme.border,
+    borderWidth: 0,
   },
   inputLabel: {
-    fontSize: 12.5,
+    fontSize: 13,
     fontWeight: '700',
-    color: '#334155',
+    color: theme.text,
     marginBottom: 8,
   },
   inputWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F4F6F9',
+    backgroundColor: theme.surface,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#DCE2EC',
+    borderColor: theme.border,
     paddingHorizontal: 12,
   },
   inputWrapperDark: {
-    backgroundColor: '#0B0F19',
-    borderColor: '#334155',
+    backgroundColor: theme.surface,
+    borderColor: theme.border,
   },
   linkIcon: {
     marginRight: 8,
@@ -1682,7 +1688,7 @@ const styles = StyleSheet.create({
   textInput: {
     flex: 1,
     height: 46,
-    color: '#0F172A',
+    color: theme.text,
     fontSize: 13.5,
   },
   clearBtn: {
@@ -1699,19 +1705,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 5,
-    backgroundColor: '#F4F6F9',
+    backgroundColor: theme.surface,
     height: 44,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#DCE2EC',
+    borderColor: theme.border,
   },
   pasteBtnDark: {
-    backgroundColor: '#1E293B',
-    borderColor: '#334155',
+    backgroundColor: theme.surface,
+    borderColor: theme.border,
   },
   pasteBtnText: {
-    color: '#334155',
-    fontSize: 12,
+    color: theme.text,
+    fontSize: 13,
     fontWeight: '700',
   },
   fetchBtn: {
@@ -1720,18 +1726,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    backgroundColor: '#2563EB',
+    backgroundColor: theme.accent,
     height: 44,
     borderRadius: 14,
-    shadowColor: '#2563EB',
+    shadowColor: theme.accent,
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.22,
+    shadowOpacity: 0,
     shadowRadius: 8,
-    elevation: 3,
+    elevation: 0,
   },
   fetchBtnText: {
-    color: '#FFFFFF',
-    fontSize: 12.5,
+    color: theme.onAccent,
+    fontSize: 13,
     fontWeight: '700',
   },
   directDownloadBtn: {
@@ -1740,38 +1746,38 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 5,
-    backgroundColor: '#4F46E5',
+    backgroundColor: theme.accent,
     height: 44,
     borderRadius: 14,
-    shadowColor: '#4F46E5',
+    shadowColor: theme.accent,
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.22,
+    shadowOpacity: 0,
     shadowRadius: 8,
-    elevation: 3,
+    elevation: 0,
   },
   directDownloadBtnText: {
-    color: '#FFFFFF',
-    fontSize: 12,
+    color: theme.onAccent,
+    fontSize: 13,
     fontWeight: '700',
   },
   errorBox: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: '#FEF2F2',
+    backgroundColor: theme.dangerSoft,
     borderRadius: 10,
     padding: 10,
     marginTop: 12,
     borderWidth: 1,
-    borderColor: '#FCA5A5',
+    borderColor: theme.dangerSoft,
   },
   errorBoxDark: {
-    backgroundColor: '#2A1215',
-    borderColor: '#7F1D1D',
+    backgroundColor: theme.dangerSoft,
+    borderColor: theme.dangerSoft,
   },
   errorText: {
-    color: '#EF4444',
-    fontSize: 12,
+    color: theme.danger,
+    fontSize: 13,
     flex: 1,
   },
   // Arama Sonuçları Stilleri
@@ -1787,39 +1793,39 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   searchResultsTitle: {
-    fontSize: 13.5,
+    fontSize: 18,
     fontWeight: '800',
-    color: '#0F172A',
+    color: theme.text,
   },
   searchResultsHint: {
-    fontSize: 10.5,
-    color: '#64748B',
+    fontSize: 13,
+    color: theme.muted,
     fontWeight: '600',
   },
   searchResultsList: {
     gap: 8,
   },
   searchResultRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F4F6F9',
+    flexDirection: 'column',
+    alignItems: 'stretch',
+    backgroundColor: theme.surface,
     borderRadius: 16,
-    padding: 9,
+    padding: 12,
     borderWidth: 1,
-    borderColor: '#E6EAF0',
-    gap: 8,
+    borderColor: theme.border,
+    gap: 12,
   },
   searchResultRowDark: {
-    backgroundColor: '#0B0F19',
-    borderColor: '#1E293B',
+    backgroundColor: theme.surface,
+    borderColor: theme.border,
   },
   searchResultRowPreviewing: {
-    borderColor: '#6366F1',
-    backgroundColor: '#EEF2FF',
+    borderColor: theme.accent,
+    backgroundColor: theme.accentSoft,
   },
   searchResultRowPreviewingDark: {
-    borderColor: '#6366F1',
-    backgroundColor: '#1E1B4B',
+    borderColor: theme.accent,
+    backgroundColor: theme.accentSoft,
   },
   searchRowMainClick: {
     flex: 1,
@@ -1828,11 +1834,11 @@ const styles = StyleSheet.create({
     gap: 9,
   },
   searchThumbBox: {
-    width: 72,
-    height: 48,
+    width: 64,
+    height: 64,
     borderRadius: 12,
     overflow: 'hidden',
-    backgroundColor: '#0F172A',
+    backgroundColor: theme.surface,
     position: 'relative',
   },
   searchThumbImg: {
@@ -1844,91 +1850,92 @@ const styles = StyleSheet.create({
     height: '100%',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#1E293B',
+    backgroundColor: theme.surface,
   },
   searchResultMeta: {
     flex: 1,
     justifyContent: 'center',
   },
   searchResultItemTitle: {
-    fontSize: 12,
+    fontSize: 15,
     fontWeight: '700',
-    color: '#0F172A',
-    lineHeight: 15.5,
+    color: theme.text,
+    lineHeight: 21,
   },
   searchResultSub: {
-    fontSize: 10.5,
-    color: '#64748B',
+    fontSize: 13,
+    color: theme.muted,
     marginTop: 2,
   },
   searchRowActions: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
+    justifyContent: 'flex-end',
   },
   previewListenBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 3,
-    height: 34,
-    paddingHorizontal: 9,
+    height: 44,
+    paddingHorizontal: 16,
     borderRadius: 12,
-    backgroundColor: '#EEF2FF',
+    backgroundColor: theme.accentSoft,
     borderWidth: 1,
-    borderColor: '#C7D2FE',
+    borderColor: theme.border,
   },
   previewListenBtnDark: {
-    backgroundColor: '#1E1B4B',
-    borderColor: '#3730A3',
+    backgroundColor: theme.accentSoft,
+    borderColor: theme.border,
   },
   previewListenBtnActive: {
-    backgroundColor: '#4F46E5',
-    borderColor: '#4F46E5',
+    backgroundColor: theme.accent,
+    borderColor: theme.accent,
   },
   previewListenBtnText: {
-    fontSize: 10.5,
+    fontSize: 13,
     fontWeight: '700',
-    color: '#4F46E5',
+    color: theme.accent,
   },
   oneTapDownloadBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 3,
-    height: 34,
-    paddingHorizontal: 10,
+    height: 44,
+    paddingHorizontal: 16,
     borderRadius: 12,
-    backgroundColor: '#2563EB',
+    backgroundColor: theme.accent,
   },
   oneTapDownloadBtnQueued: {
-    backgroundColor: '#D97706',
+    backgroundColor: theme.accent,
   },
   oneTapDownloadBtnText: {
-    fontSize: 10.5,
+    fontSize: 13,
     fontWeight: '700',
-    color: '#FFFFFF',
+    color: theme.onAccent,
   },
   backToSearchBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
     alignSelf: 'flex-start',
-    backgroundColor: '#EFF6FF',
+    backgroundColor: theme.accentSoft,
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#BFDBFE',
+    borderColor: theme.border,
     marginBottom: 12,
   },
   backToSearchBtnDark: {
-    backgroundColor: '#1E293B',
-    borderColor: '#334155',
+    backgroundColor: theme.surface,
+    borderColor: theme.border,
   },
   backToSearchText: {
-    color: '#2563EB',
-    fontSize: 11.5,
+    color: theme.accent,
+    fontSize: 13,
     fontWeight: '700',
   },
   previewHeader: {
@@ -1942,7 +1949,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     overflow: 'hidden',
     position: 'relative',
-    backgroundColor: '#1E293B',
+    backgroundColor: theme.surface,
   },
   thumbnail: {
     width: '100%',
@@ -1952,13 +1959,13 @@ const styles = StyleSheet.create({
     position: 'absolute',
     bottom: 3,
     right: 3,
-    backgroundColor: 'rgba(0,0,0,0.85)',
+    backgroundColor: theme.surface,
     paddingHorizontal: 4,
     paddingVertical: 1.5,
     borderRadius: 4,
   },
   durationText: {
-    color: '#FFFFFF',
+    color: theme.text,
     fontSize: 9,
     fontWeight: '700',
   },
@@ -1969,7 +1976,7 @@ const styles = StyleSheet.create({
   videoTitle: {
     fontSize: 13.5,
     fontWeight: '700',
-    color: '#0F172A',
+    color: theme.text,
     lineHeight: 18,
   },
   channelRow: {
@@ -1979,8 +1986,8 @@ const styles = StyleSheet.create({
     marginTop: 3,
   },
   channelText: {
-    fontSize: 12,
-    color: '#64748B',
+    fontSize: 13,
+    color: theme.muted,
     fontWeight: '500',
   },
   viewsRow: {
@@ -1989,8 +1996,8 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   viewsText: {
-    fontSize: 11,
-    color: '#94A3B8',
+    fontSize: 13,
+    color: theme.muted,
   },
   detailPreviewListenBtn: {
     flexDirection: 'row',
@@ -1999,43 +2006,43 @@ const styles = StyleSheet.create({
     gap: 7,
     height: 40,
     borderRadius: 10,
-    backgroundColor: '#EEF2FF',
+    backgroundColor: theme.accentSoft,
     borderWidth: 1,
-    borderColor: '#C7D2FE',
+    borderColor: theme.border,
     marginBottom: 12,
   },
   detailPreviewListenBtnDark: {
-    backgroundColor: '#1E1B4B',
-    borderColor: '#3730A3',
+    backgroundColor: theme.accentSoft,
+    borderColor: theme.border,
   },
   detailPreviewListenBtnActive: {
-    backgroundColor: '#4F46E5',
-    borderColor: '#4F46E5',
+    backgroundColor: theme.accent,
+    borderColor: theme.accent,
   },
   detailPreviewListenText: {
-    fontSize: 12.5,
+    fontSize: 13,
     fontWeight: '700',
-    color: '#4F46E5',
+    color: theme.accent,
   },
   sectionLabel: {
-    fontSize: 12.5,
+    fontSize: 13,
     fontWeight: '700',
-    color: '#334155',
+    color: theme.text,
     marginBottom: 7,
     marginTop: 2,
   },
   formatToggleContainer: {
     flexDirection: 'row',
-    backgroundColor: '#F1F5F9',
+    backgroundColor: theme.surface,
     borderRadius: 11,
     padding: 4,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: theme.border,
   },
   formatToggleContainerDark: {
-    backgroundColor: '#0B0F19',
-    borderColor: '#1E293B',
+    backgroundColor: theme.surface,
+    borderColor: theme.border,
   },
   formatTab: {
     flex: 1,
@@ -2047,19 +2054,19 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   formatTabActive: {
-    backgroundColor: '#2563EB',
-    shadowColor: '#2563EB',
-    shadowOpacity: 0.2,
+    backgroundColor: theme.accent,
+    shadowColor: theme.accent,
+    shadowOpacity: 0,
     shadowRadius: 4,
-    elevation: 2,
+    elevation: 0,
   },
   formatTabText: {
-    color: '#64748B',
-    fontSize: 12.5,
+    color: theme.muted,
+    fontSize: 13,
     fontWeight: '600',
   },
   formatTabTextActive: {
-    color: '#FFFFFF',
+    color: theme.onAccent,
   },
   qualityList: {
     gap: 7,
@@ -2069,28 +2076,28 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 9,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: theme.surface,
     paddingVertical: 9,
     paddingHorizontal: 12,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: theme.border,
   },
   qualityChipDark: {
-    backgroundColor: '#0B0F19',
-    borderColor: '#1E293B',
+    backgroundColor: theme.surface,
+    borderColor: theme.border,
   },
   qualityChipSelected: {
-    borderColor: '#2563EB',
-    backgroundColor: '#EFF6FF',
+    borderColor: theme.accent,
+    backgroundColor: theme.accentSoft,
   },
   qualityChipSelectedDark: {
-    borderColor: '#3B82F6',
-    backgroundColor: '#1E293B',
+    borderColor: theme.accent,
+    backgroundColor: theme.surface,
   },
   qualityChipText: {
-    color: '#475569',
-    fontSize: 12.5,
+    color: theme.muted,
+    fontSize: 13,
     fontWeight: '500',
   },
   qualityChipTextSelected: {
@@ -2098,7 +2105,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   qualityChipTextSelectedDark: {
-    color: '#60A5FA',
+    color: theme.accent,
     fontWeight: '700',
   },
   downloadActionBtn: {
@@ -2106,20 +2113,20 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    backgroundColor: '#2563EB',
+    backgroundColor: theme.accent,
     height: 46,
     borderRadius: 12,
-    shadowColor: '#2563EB',
-    shadowOpacity: 0.25,
+    shadowColor: theme.accent,
+    shadowOpacity: 0,
     shadowRadius: 8,
-    elevation: 4,
+    elevation: 0,
   },
   downloadActionBtnText: {
-    color: '#FFFFFF',
+    color: theme.onAccent,
     fontSize: 14,
     fontWeight: '700',
   },
-  // İndirme Kuyruğu Stilleri
+  // İndirme sırası Stilleri
   queueHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2132,9 +2139,9 @@ const styles = StyleSheet.create({
     gap: 7,
   },
   queueSectionTitle: {
-    fontSize: 14,
+    fontSize: 18,
     fontWeight: '800',
-    color: '#0F172A',
+    color: theme.text,
   },
   waitingCountBadge: {
     backgroundColor: '#FEF3C7',
@@ -2146,7 +2153,7 @@ const styles = StyleSheet.create({
   },
   waitingCountBadgeText: {
     color: '#B45309',
-    fontSize: 10.5,
+    fontSize: 13,
     fontWeight: '800',
   },
   clearFinishedBtn: {
@@ -2155,8 +2162,8 @@ const styles = StyleSheet.create({
     borderRadius: 6,
   },
   clearFinishedText: {
-    color: '#64748B',
-    fontSize: 11,
+    color: theme.muted,
+    fontSize: 13,
     fontWeight: '700',
   },
   queueTasksList: {
@@ -2166,12 +2173,12 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 12,
     borderWidth: 1,
-    borderColor: '#BFDBFE',
-    backgroundColor: '#F8FAFC',
+    borderColor: theme.border,
+    backgroundColor: theme.surface,
   },
   taskCardDark: {
-    backgroundColor: '#0B0F19',
-    borderColor: '#1E293B',
+    backgroundColor: theme.surface,
+    borderColor: theme.border,
   },
   taskCardQueued: {
     borderColor: '#FDE68A',
@@ -2199,13 +2206,13 @@ const styles = StyleSheet.create({
     borderRadius: 6,
   },
   typeBadgeText: {
-    color: '#FFFFFF',
-    fontSize: 10.5,
+    color: theme.onAccent,
+    fontSize: 13,
     fontWeight: '800',
   },
   taskTitle: {
-    color: '#0F172A',
-    fontSize: 12.5,
+    color: theme.text,
+    fontSize: 13,
     fontWeight: '700',
     flex: 1,
   },
@@ -2226,31 +2233,31 @@ const styles = StyleSheet.create({
   },
   queueOrderPillText: {
     color: '#B45309',
-    fontSize: 10.5,
+    fontSize: 13,
     fontWeight: '800',
   },
   cancelQueueBtn: {
     padding: 2,
   },
   percentText: {
-    color: '#2563EB',
+    color: theme.accent,
     fontSize: 13.5,
     fontWeight: '800',
     marginLeft: 8,
   },
   progressBarBg: {
     height: 7,
-    backgroundColor: '#E2E8F0',
+    backgroundColor: theme.border,
     borderRadius: 4,
     overflow: 'hidden',
     marginBottom: 8,
   },
   progressBarBgDark: {
-    backgroundColor: '#1E293B',
+    backgroundColor: theme.surface,
   },
   progressBarFill: {
     height: '100%',
-    backgroundColor: '#2563EB',
+    backgroundColor: theme.accent,
     borderRadius: 4,
   },
   taskMetaRow: {
@@ -2265,26 +2272,26 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   taskStatusText: {
-    color: '#475569',
-    fontSize: 11.5,
+    color: theme.muted,
+    fontSize: 13,
     fontWeight: '600',
     flex: 1,
   },
   taskEtaText: {
-    color: '#2563EB',
-    fontSize: 11,
+    color: theme.accent,
+    fontSize: 13,
     fontWeight: '700',
   },
   completedActions: {
     marginTop: 10,
     paddingTop: 10,
     borderTopWidth: 1,
-    borderTopColor: '#E2E8F0',
+    borderTopColor: theme.border,
     flexDirection: 'row',
     gap: 8,
   },
   completedActionsDark: {
-    borderTopColor: '#1E293B',
+    borderTopColor: theme.border,
   },
   saveFileBtn: {
     flex: 1,
@@ -2292,13 +2299,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    backgroundColor: '#10B981',
+    backgroundColor: theme.accent,
     height: 36,
     borderRadius: 9,
   },
   saveFileBtnText: {
-    color: '#FFFFFF',
-    fontSize: 12,
+    color: theme.onAccent,
+    fontSize: 13,
     fontWeight: '700',
   },
   historyShortcutBtn: {
@@ -2309,17 +2316,20 @@ const styles = StyleSheet.create({
     gap: 5,
     height: 36,
     borderRadius: 9,
-    backgroundColor: '#EFF6FF',
+    backgroundColor: theme.accentSoft,
     borderWidth: 1,
-    borderColor: '#BFDBFE',
+    borderColor: theme.border,
   },
   historyShortcutBtnDark: {
-    backgroundColor: '#1E293B',
-    borderColor: '#334155',
+    backgroundColor: theme.surface,
+    borderColor: theme.border,
   },
   historyShortcutText: {
-    color: '#2563EB',
-    fontSize: 12,
+    color: theme.accent,
+    fontSize: 13,
     fontWeight: '700',
   },
 });
+
+const lightStyles = createStyles(lightTheme);
+const darkStyles = createStyles(darkTheme);

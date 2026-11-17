@@ -494,7 +494,7 @@ def serve_frontend(path):
     if os.path.exists(index_file):
         return send_file(index_file)
 
-    return jsonify({"message": "Mobil Media Toolkit API çalışıyor."})
+    return jsonify({"message": "Media Toolkit API çalışıyor."})
 
 if __name__ == "__main__":
     host = os.environ.get("HOST", "127.0.0.1")
@@ -506,7 +506,7 @@ if __name__ == "__main__":
         t_tunnel.start()
 
     print("\n=======================================================")
-    print(">> Mobil Media Toolkit Python Backend Baslatiliyor...")
+    print(">> Media Toolkit Python Backend Baslatiliyor...")
     print(f">> Localhost: http://{host}:{port}")
     print("=======================================================\n")
     app.run(host=host, port=port, debug=False, threaded=True)

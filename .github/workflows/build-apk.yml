@@ -71,7 +71,7 @@ jobs:
         continue-on-error: true
         with:
           tag_name: v2.0.0
-          name: "Mobil Media Toolkit v2.0.0 (NewPipe Motoru)"
+          name: "Media Toolkit v2.0.0 (NewPipe Motoru)"
           body: "Tamamen cihaz icinde calisan, Python ve FFmpeg sisirmesi olmadan hafifletilmis (~15-20 MB) NewPipeExtractor v0.27.1 tabanli Android APK (M4A Ses + 1080p/720p MP4 Video)."
           draft: false
           prerelease: false

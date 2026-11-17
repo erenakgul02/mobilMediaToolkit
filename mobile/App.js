@@ -1,3 +1,4 @@
+import { getTheme, lightTheme, darkTheme } from './src/theme';
 import React, { useState, useEffect, useRef } from 'react';
 import {
   StyleSheet,
@@ -61,6 +62,8 @@ function formatMs(ms) {
 export default function App() {
   const [activeTab, setActiveTab] = useState('downloader');
   const [isDarkMode, setIsDarkMode] = useState(false);
+  const theme = getTheme(isDarkMode);
+  const styles = isDarkMode ? darkStyles : lightStyles;
   const [expandedPlayerVisible, setExpandedPlayerVisible] = useState(false);
   const [activePlayerPanel, setActivePlayerPanel] = useState(null); // 'sleep' | 'fx' | null
   const [seekBarWidth, setSeekBarWidth] = useState(1);
@@ -115,7 +118,7 @@ export default function App() {
   });
 
   useEffect(() => {
-    // Kayıtlı Gece Modu tercihini yükle
+    // Kayıtlı Gece tercihini yükle
     getThemeMode()
       .then((dark) => setIsDarkMode(Boolean(dark)))
       .catch(() => {});
@@ -200,25 +203,13 @@ export default function App() {
         ]}
       >
         <View style={styles.logoRow}>
-          <View
-            style={[
-              styles.logoBadge,
-              isDarkMode && styles.logoBadgeDark,
-            ]}
-          >
-            <Image
-              source={require('./assets/app-logo.png')}
-              style={styles.logoImage}
-              resizeMode="contain"
-            />
-          </View>
           <Text
             style={[
               styles.brandTitle,
               isDarkMode && styles.brandTitleDark,
             ]}
           >
-            MediaToolkit
+            Media Toolkit
           </Text>
         </View>
 
@@ -229,12 +220,14 @@ export default function App() {
             isDarkMode && styles.themeToggleBtnDark,
           ]}
           activeOpacity={0.75}
+          accessibilityRole="button"
+          accessibilityLabel={isDarkMode ? "Gündüz temasına geç" : "Gece temasına geç"}
           onPress={handleToggleDarkMode}
         >
           <Ionicons
             name={isDarkMode ? 'sunny' : 'moon'}
             size={14}
-            color={isDarkMode ? '#FBBF24' : '#334155'}
+            color={isDarkMode ? theme.accent : theme.text}
           />
           <Text
             style={[
@@ -242,7 +235,7 @@ export default function App() {
               isDarkMode && styles.themeToggleTextDark,
             ]}
           >
-            {isDarkMode ? 'Gündüz' : 'Gece Modu'}
+            {isDarkMode ? 'Gündüz' : 'Gece'}
           </Text>
         </TouchableOpacity>
       </View>
@@ -300,7 +293,7 @@ export default function App() {
                   />
                 ) : (
                   <View style={styles.miniVinylFallback}>
-                    <Ionicons name="musical-notes" size={14} color="#FFFFFF" />
+                    <Ionicons name="musical-notes" size={14} color={theme.onAccent} />
                   </View>
                 )}
                 <View style={styles.miniVinylHole} />
@@ -311,7 +304,7 @@ export default function App() {
                   {playerState.title || 'Şarkı Çalıyor'}
                 </Text>
                 <Text style={styles.miniSongMeta} numberOfLines={1}>
-                  {playerState.uploader || 'MediaToolkit'} •{' '}
+                  {playerState.uploader || 'Media Toolkit'} •{' '}
                   {formatMs(playerState.positionMs)} /{' '}
                   {formatMs(playerState.durationMs)}
                 </Text>
@@ -324,7 +317,7 @@ export default function App() {
                 style={styles.miniCtrlBtn}
                 onPress={() => prevAudioTrack()}
               >
-                <Ionicons name="play-skip-back" size={19} color="#E2E8F0" />
+                <Ionicons name="play-skip-back" size={19} color={theme.text} />
               </TouchableOpacity>
 
               <TouchableOpacity
@@ -334,7 +327,7 @@ export default function App() {
                 <Ionicons
                   name={playerState.isPlaying ? 'pause' : 'play'}
                   size={19}
-                  color="#1E1B4B"
+                  color={theme.onAccent}
                   style={!playerState.isPlaying ? { marginLeft: 1 } : undefined}
                 />
               </TouchableOpacity>
@@ -343,14 +336,14 @@ export default function App() {
                 style={styles.miniCtrlBtn}
                 onPress={() => nextAudioTrack()}
               >
-                <Ionicons name="play-skip-forward" size={19} color="#E2E8F0" />
+                <Ionicons name="play-skip-forward" size={19} color={theme.text} />
               </TouchableOpacity>
 
               <TouchableOpacity
                 style={styles.miniCloseBtn}
                 onPress={() => stopAudioPlayer()}
               >
-                <Ionicons name="close" size={18} color="#94A3B8" />
+                <Ionicons name="close" size={18} color={theme.muted} />
               </TouchableOpacity>
             </View>
           </View>
@@ -378,11 +371,11 @@ export default function App() {
             color={
               activeTab === 'downloader'
                 ? isDarkMode
-                  ? '#60A5FA'
-                  : '#2563EB'
+                  ? theme.accent
+                  : theme.accent
                 : isDarkMode
-                ? '#94A3B8'
-                : '#64748B'
+                ? theme.muted
+                : theme.muted
             }
           />
           <Text
@@ -406,16 +399,16 @@ export default function App() {
           onPress={() => setActiveTab('history')}
         >
           <Ionicons
-            name={activeTab === 'history' ? 'musical-notes' : 'musical-notes-outline'}
+            name={activeTab === 'history' ? 'folder' : 'folder-outline'}
             size={21}
             color={
               activeTab === 'history'
                 ? isDarkMode
-                  ? '#60A5FA'
-                  : '#2563EB'
+                  ? theme.accent
+                  : theme.accent
                 : isDarkMode
-                ? '#94A3B8'
-                : '#64748B'
+                ? theme.muted
+                : theme.muted
             }
           />
           <Text
@@ -426,7 +419,7 @@ export default function App() {
                 (isDarkMode ? styles.navLabelActiveDark : styles.navLabelActive),
             ]}
           >
-            İndirilenler
+            Arşiv
           </Text>
         </TouchableOpacity>
       </View>
@@ -446,7 +439,7 @@ export default function App() {
                 style={styles.expandedTopBtn}
                 onPress={() => setExpandedPlayerVisible(false)}
               >
-                <Ionicons name="chevron-down" size={24} color="#E2E8F0" />
+                <Ionicons name="chevron-down" size={24} color={theme.text} />
               </TouchableOpacity>
 
               <View style={styles.expandedHeaderCenter}>
@@ -470,7 +463,7 @@ export default function App() {
                   }
                 }}
               >
-                <Ionicons name="share-social-outline" size={20} color="#E2E8F0" />
+                <Ionicons name="share-social-outline" size={20} color={theme.text} />
               </TouchableOpacity>
             </View>
 
@@ -493,7 +486,7 @@ export default function App() {
                         />
                       ) : (
                         <View style={styles.largeVinylCoverFallback}>
-                          <Ionicons name="musical-notes" size={54} color="#FFFFFF" />
+                          <Ionicons name="musical-notes" size={54} color={theme.onAccent} />
                         </View>
                       )}
                       {/* Plak Merkez Deliği */}
@@ -512,7 +505,7 @@ export default function App() {
                 {playerState.title || 'Bilinmeyen Şarkı'}
               </Text>
               <Text style={styles.expandedSongArtist} numberOfLines={1}>
-                {playerState.uploader || 'MediaToolkit'}
+                {playerState.uploader || 'Media Toolkit'}
               </Text>
             </View>
 
@@ -560,7 +553,7 @@ export default function App() {
                   <Ionicons
                     name="shuffle"
                     size={15}
-                    color={playerState.shuffleEnabled ? '#FFFFFF' : '#A5B4FC'}
+                    color={playerState.shuffleEnabled ? theme.onAccent : theme.accent}
                   />
                   <Text
                     style={[
@@ -587,8 +580,8 @@ export default function App() {
                     size={15}
                     color={
                       playerState.repeatMode && playerState.repeatMode !== 'OFF'
-                        ? '#FFFFFF'
-                        : '#A5B4FC'
+                        ? theme.onAccent
+                        : theme.accent
                     }
                   />
                   <Text
@@ -629,8 +622,8 @@ export default function App() {
                       playerState.sleepStopAtEndOfTrack ||
                       playerState.sleepTimerRemainingSec > 0 ||
                       activePlayerPanel === 'sleep'
-                        ? '#FFFFFF'
-                        : '#A5B4FC'
+                        ? theme.onAccent
+                        : theme.accent
                     }
                   />
                   <Text
@@ -650,7 +643,7 @@ export default function App() {
                   </Text>
                 </TouchableOpacity>
 
-                {/* Oynatma Hızı & Bas Güçlendirici (Equalizer) */}
+                {/* Çalma hızı & Bas Güçlendirici (Equalizer) */}
                 <TouchableOpacity
                   style={[
                     styles.advPillBtn,
@@ -676,8 +669,8 @@ export default function App() {
                       (playerState.audioPreset &&
                         playerState.audioPreset !== 'NORMAL') ||
                       activePlayerPanel === 'fx'
-                        ? '#FFFFFF'
-                        : '#A5B4FC'
+                        ? theme.onAccent
+                        : theme.accent
                     }
                   />
                   <Text
@@ -753,7 +746,7 @@ export default function App() {
               {/* Açılır Hız ve Ses Efekti (Bas Güçlendirici / Equalizer) Seçenekleri */}
               {activePlayerPanel === 'fx' && (
                 <View style={styles.subControlDrawer}>
-                  <Text style={styles.subControlTitle}>Oynatma Hızı</Text>
+                  <Text style={styles.subControlTitle}>Çalma hızı</Text>
                   <View style={styles.subControlChipsRow}>
                     {SPEED_OPTIONS.map((spd) => {
                       const isSelected =
@@ -782,7 +775,7 @@ export default function App() {
                   </View>
 
                   <Text style={[styles.subControlTitle, { marginTop: 8 }]}>
-                    Ses Profili (Equalizer & Bas Güçlendirici)
+                    Ses ayarları
                   </Text>
                   <View style={styles.subControlChipsRow}>
                     {AUDIO_PRESET_OPTIONS.map((pr) => {
@@ -819,7 +812,7 @@ export default function App() {
                 style={styles.expandedSecondaryBtn}
                 onPress={() => handleSkipSeconds(-10)}
               >
-                <Ionicons name="play-back" size={18} color="#CBD5E1" />
+                <Ionicons name="play-back" size={18} color={theme.muted} />
                 <Text style={styles.skipSecText}>-10s</Text>
               </TouchableOpacity>
 
@@ -827,7 +820,7 @@ export default function App() {
                 style={styles.expandedSkipBtn}
                 onPress={() => prevAudioTrack()}
               >
-                <Ionicons name="play-skip-back" size={28} color="#FFFFFF" />
+                <Ionicons name="play-skip-back" size={28} color={theme.text} />
               </TouchableOpacity>
 
               <TouchableOpacity
@@ -837,7 +830,7 @@ export default function App() {
                 <Ionicons
                   name={playerState.isPlaying ? 'pause' : 'play'}
                   size={32}
-                  color="#1E1B4B"
+                  color={theme.onAccent}
                   style={!playerState.isPlaying ? { marginLeft: 3 } : undefined}
                 />
               </TouchableOpacity>
@@ -846,14 +839,14 @@ export default function App() {
                 style={styles.expandedSkipBtn}
                 onPress={() => nextAudioTrack()}
               >
-                <Ionicons name="play-skip-forward" size={28} color="#FFFFFF" />
+                <Ionicons name="play-skip-forward" size={28} color={theme.text} />
               </TouchableOpacity>
 
               <TouchableOpacity
                 style={styles.expandedSecondaryBtn}
                 onPress={() => handleSkipSeconds(10)}
               >
-                <Ionicons name="play-forward" size={18} color="#CBD5E1" />
+                <Ionicons name="play-forward" size={18} color={theme.muted} />
                 <Text style={styles.skipSecText}>+10s</Text>
               </TouchableOpacity>
             </View>
@@ -864,10 +857,10 @@ export default function App() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (theme) => StyleSheet.create({
   safeContainer: {
     flex: 1,
-    backgroundColor: '#F4F6F9',
+    backgroundColor: theme.background,
     paddingTop:
       Platform.OS === 'android'
         ? Math.max(0, (RNStatusBar.currentHeight || 20) - 8)
@@ -877,7 +870,7 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' ? { minHeight: '100vh' } : {}),
   },
   safeContainerDark: {
-    backgroundColor: '#090D16',
+    backgroundColor: theme.background,
   },
   topHeader: {
     flexDirection: 'row',
@@ -885,22 +878,24 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginHorizontal: 14,
     marginTop: 6,
-    marginBottom: 4,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: '#E6EAF0',
-    backgroundColor: '#FFFFFF',
-    shadowColor: '#0F172A',
+    marginBottom: 8,
+    paddingHorizontal: 4,
+    paddingVertical: 12,
+    borderRadius: 0,
+    borderWidth: 0,
+    borderColor: theme.border,
+    backgroundColor: theme.background,
+    shadowColor: theme.surface,
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.04,
+    shadowOpacity: 0,
     shadowRadius: 10,
-    elevation: 2,
+    elevation: 0,
   },
   topHeaderDark: {
-    backgroundColor: '#111827',
-    borderColor: '#1E293B',
+    backgroundColor: theme.background,
+    borderColor: theme.border,
+    borderWidth: 0,
+    borderRadius: 0,
   },
   logoRow: {
     flexDirection: 'row',
@@ -911,16 +906,16 @@ const styles = StyleSheet.create({
     width: 34,
     height: 34,
     borderRadius: 12,
-    backgroundColor: '#F4F6F9',
+    backgroundColor: theme.surface,
     alignItems: 'center',
     justifyContent: 'center',
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: '#E6EAF0',
+    borderColor: theme.border,
   },
   logoBadgeDark: {
-    backgroundColor: '#1E293B',
-    borderColor: '#334155',
+    backgroundColor: theme.surface,
+    borderColor: theme.border,
   },
   logoImage: {
     width: 22,
@@ -929,61 +924,61 @@ const styles = StyleSheet.create({
   brandTitle: {
     fontSize: 17,
     fontWeight: '800',
-    color: '#0F172A',
+    color: theme.text,
     letterSpacing: -0.4,
   },
   brandTitleDark: {
-    color: '#F8FAFC',
+    color: theme.text,
   },
   themeToggleBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: '#F4F6F9',
+    backgroundColor: theme.surface,
     paddingHorizontal: 12,
     paddingVertical: 7,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: theme.border,
   },
   themeToggleBtnDark: {
-    backgroundColor: '#1E293B',
-    borderColor: '#334155',
+    backgroundColor: theme.surface,
+    borderColor: theme.border,
   },
   themeToggleText: {
-    fontSize: 11.5,
+    fontSize: 13,
     fontWeight: '700',
-    color: '#334155',
+    color: theme.text,
   },
   themeToggleTextDark: {
-    color: '#F8FAFC',
+    color: theme.text,
   },
   tabContentArea: {
     flex: 1,
   },
   // YÜZEN ADA (FLOATING ISLAND) KOYU MİNİ OYNATICI
   miniPlayerContainer: {
-    backgroundColor: '#0F172A',
+    backgroundColor: theme.surface,
     marginHorizontal: 14,
     marginBottom: 8,
-    borderRadius: 22,
+    borderRadius: 16,
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: '#1E293B',
-    shadowColor: '#0F172A',
+    borderColor: theme.border,
+    shadowColor: theme.surface,
     shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.22,
+    shadowOpacity: 0,
     shadowRadius: 16,
-    elevation: 10,
+    elevation: 0,
   },
   miniProgressBg: {
     height: 3,
-    backgroundColor: '#1E293B',
+    backgroundColor: theme.surface,
     width: '100%',
   },
   miniProgressFill: {
     height: '100%',
-    backgroundColor: '#6366F1',
+    backgroundColor: theme.accent,
   },
   miniPlayerContent: {
     flexDirection: 'row',
@@ -1003,12 +998,12 @@ const styles = StyleSheet.create({
     width: 42,
     height: 42,
     borderRadius: 14,
-    backgroundColor: '#1E293B',
+    backgroundColor: theme.surface,
     padding: 3,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1.5,
-    borderColor: '#6366F1',
+    borderColor: theme.accent,
   },
   miniVinylImage: {
     width: '100%',
@@ -1019,7 +1014,7 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
     borderRadius: 11,
-    backgroundColor: '#4F46E5',
+    backgroundColor: theme.accent,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1028,21 +1023,21 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: '#0F172A',
+    backgroundColor: theme.surface,
     borderWidth: 1.5,
-    borderColor: '#E2E8F0',
+    borderColor: theme.border,
   },
   miniTextCol: {
     flex: 1,
   },
   miniSongTitle: {
-    color: '#FFFFFF',
-    fontSize: 12.5,
+    color: theme.text,
+    fontSize: 13,
     fontWeight: '700',
   },
   miniSongMeta: {
-    color: '#94A3B8',
-    fontSize: 10.5,
+    color: theme.muted,
+    fontSize: 13,
     marginTop: 2,
   },
   miniControlsRow: {
@@ -1051,10 +1046,10 @@ const styles = StyleSheet.create({
     gap: 5,
   },
   miniCtrlBtn: {
-    width: 32,
-    height: 32,
+    width: 40,
+    height: 44,
     borderRadius: 11,
-    backgroundColor: 'rgba(255,255,255,0.06)',
+    backgroundColor: theme.surface,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1062,38 +1057,40 @@ const styles = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: 13,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: theme.accent,
     alignItems: 'center',
     justifyContent: 'center',
   },
   miniCloseBtn: {
-    width: 28,
-    height: 32,
+    width: 40,
+    height: 44,
     alignItems: 'center',
     justifyContent: 'center',
   },
   // YÜZEN BENTO ALT NAVİGASYON ADASI (FLOATING DOCK)
   bottomNav: {
     flexDirection: 'row',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: theme.background,
     marginHorizontal: 14,
     marginBottom: Platform.OS === 'android' ? 30 : 14,
-    borderRadius: 22,
-    borderWidth: 1,
-    borderColor: '#E6EAF0',
+    borderRadius: 0,
+    borderWidth: 0,
+    borderColor: theme.border,
     paddingVertical: 7,
     paddingHorizontal: 10,
     justifyContent: 'space-around',
     alignItems: 'center',
-    shadowColor: '#0F172A',
+    shadowColor: theme.surface,
     shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.08,
+    shadowOpacity: 0,
     shadowRadius: 14,
-    elevation: 10,
+    elevation: 0,
   },
   bottomNavDark: {
-    backgroundColor: '#111827',
-    borderColor: '#1E293B',
+    backgroundColor: theme.background,
+    borderColor: theme.border,
+    borderWidth: 0,
+    borderRadius: 0,
   },
   navItem: {
     flex: 1,
@@ -1106,41 +1103,41 @@ const styles = StyleSheet.create({
     borderRadius: 16,
   },
   navItemActive: {
-    backgroundColor: '#EEF2FF',
-    shadowColor: '#4F46E5',
+    backgroundColor: theme.accentSoft,
+    shadowColor: theme.accent,
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
+    shadowOpacity: 0,
     shadowRadius: 4,
-    elevation: 1,
+    elevation: 0,
   },
   navItemActiveDark: {
-    backgroundColor: '#1E293B',
+    backgroundColor: theme.accentSoft,
   },
   navLabel: {
     fontSize: 13,
-    color: '#64748B',
+    color: theme.muted,
     fontWeight: '600',
   },
   navLabelDark: {
-    color: '#94A3B8',
+    color: theme.muted,
   },
   navLabelActive: {
-    color: '#2563EB',
+    color: theme.accent,
     fontWeight: '800',
   },
   navLabelActiveDark: {
-    color: '#60A5FA',
+    color: theme.accent,
     fontWeight: '800',
   },
   // BÜYÜK TAM EKRAN MÜZİK ÇALAR MODAL STİLLERİ
   modalBackdrop: {
     flex: 1,
-    backgroundColor: 'rgba(9, 13, 22, 0.92)',
+    backgroundColor: theme.overlay,
     justifyContent: 'flex-end',
   },
   expandedPlayerSheet: {
     flex: 1,
-    backgroundColor: '#13112E',
+    backgroundColor: theme.background,
     paddingTop: Platform.OS === 'android' ? (RNStatusBar.currentHeight || 24) + 10 : 40,
     paddingBottom: Platform.OS === 'android' ? 54 : 36,
     paddingHorizontal: 24,
@@ -1155,7 +1152,7 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 12,
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: theme.surface,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1163,14 +1160,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   expandedPlayingLabel: {
-    color: '#A5B4FC',
-    fontSize: 11,
+    color: theme.accent,
+    fontSize: 13,
     fontWeight: '800',
     letterSpacing: 1.2,
   },
   expandedPlaylistPos: {
-    color: '#E2E8F0',
-    fontSize: 12,
+    color: theme.text,
+    fontSize: 13,
     fontWeight: '600',
     marginTop: 2,
   },
@@ -1183,23 +1180,23 @@ const styles = StyleSheet.create({
     width: 248,
     height: 248,
     borderRadius: 124,
-    backgroundColor: '#090D16',
+    backgroundColor: theme.surface,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 3,
-    borderColor: '#312E81',
-    shadowColor: '#6366F1',
+    borderColor: theme.border,
+    shadowColor: theme.accent,
     shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.35,
+    shadowOpacity: 0,
     shadowRadius: 20,
-    elevation: 14,
+    elevation: 0,
   },
   largeVinylGroove1: {
     width: 224,
     height: 224,
     borderRadius: 112,
     borderWidth: 1,
-    borderColor: '#1E293B',
+    borderColor: theme.border,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1208,7 +1205,7 @@ const styles = StyleSheet.create({
     height: 200,
     borderRadius: 100,
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: theme.border,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1218,10 +1215,10 @@ const styles = StyleSheet.create({
     borderRadius: 86,
     overflow: 'hidden',
     borderWidth: 2.5,
-    borderColor: '#6366F1',
+    borderColor: theme.accent,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#312E81',
+    backgroundColor: theme.accentSoft,
   },
   largeVinylCoverImg: {
     width: '100%',
@@ -1230,7 +1227,7 @@ const styles = StyleSheet.create({
   largeVinylCoverFallback: {
     width: '100%',
     height: '100%',
-    backgroundColor: '#4F46E5',
+    backgroundColor: theme.accent,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1239,31 +1236,31 @@ const styles = StyleSheet.create({
     width: 34,
     height: 34,
     borderRadius: 17,
-    backgroundColor: '#090D16',
+    backgroundColor: theme.surface,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 2,
-    borderColor: '#6366F1',
+    borderColor: theme.accent,
   },
   largeVinylSpindleInner: {
     width: 12,
     height: 12,
     borderRadius: 6,
-    backgroundColor: '#E2E8F0',
+    backgroundColor: theme.border,
   },
   expandedTrackInfo: {
     alignItems: 'center',
     paddingHorizontal: 10,
   },
   expandedSongTitle: {
-    color: '#FFFFFF',
+    color: theme.text,
     fontSize: 19,
     fontWeight: '800',
     textAlign: 'center',
     lineHeight: 25,
   },
   expandedSongArtist: {
-    color: '#A5B4FC',
+    color: theme.accent,
     fontSize: 14,
     fontWeight: '600',
     marginTop: 6,
@@ -1278,14 +1275,14 @@ const styles = StyleSheet.create({
   },
   seekTrackBg: {
     height: 6,
-    backgroundColor: '#312E81',
+    backgroundColor: theme.accentSoft,
     borderRadius: 3,
     overflow: 'hidden',
     width: '100%',
   },
   seekTrackFill: {
     height: '100%',
-    backgroundColor: '#818CF8',
+    backgroundColor: theme.accent,
     borderRadius: 3,
   },
   timeLabelsRow: {
@@ -1294,8 +1291,8 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   timeLabelText: {
-    color: '#94A3B8',
-    fontSize: 12,
+    color: theme.muted,
+    fontSize: 13,
     fontWeight: '700',
   },
   advancedToolsSection: {
@@ -1316,33 +1313,33 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
     paddingHorizontal: 4,
     borderRadius: 10,
-    backgroundColor: 'rgba(255,255,255,0.07)',
+    backgroundColor: theme.surface,
     borderWidth: 1,
-    borderColor: 'rgba(165, 180, 252, 0.2)',
+    borderColor: theme.border,
   },
   advPillBtnActive: {
-    backgroundColor: '#4F46E5',
-    borderColor: '#6366F1',
+    backgroundColor: theme.accent,
+    borderColor: theme.accent,
   },
   advPillText: {
-    color: '#CBD5E1',
-    fontSize: 10.5,
+    color: theme.muted,
+    fontSize: 13,
     fontWeight: '700',
   },
   advPillTextActive: {
-    color: '#FFFFFF',
+    color: theme.onAccent,
   },
   subControlDrawer: {
     marginTop: 8,
     padding: 10,
     borderRadius: 12,
-    backgroundColor: 'rgba(9, 13, 22, 0.65)',
+    backgroundColor: theme.surface,
     borderWidth: 1,
-    borderColor: '#312E81',
+    borderColor: theme.border,
   },
   subControlTitle: {
-    color: '#A5B4FC',
-    fontSize: 11,
+    color: theme.accent,
+    fontSize: 13,
     fontWeight: '700',
     marginBottom: 6,
   },
@@ -1356,21 +1353,21 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingVertical: 6,
     borderRadius: 8,
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: theme.surface,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.12)',
+    borderColor: theme.border,
   },
   subChipSelected: {
-    backgroundColor: '#4F46E5',
-    borderColor: '#818CF8',
+    backgroundColor: theme.accent,
+    borderColor: theme.accent,
   },
   subChipText: {
-    color: '#E2E8F0',
-    fontSize: 11,
+    color: theme.text,
+    fontSize: 13,
     fontWeight: '700',
   },
   subChipTextSelected: {
-    color: '#FFFFFF',
+    color: theme.onAccent,
   },
   expandedControlsRow: {
     flexDirection: 'row',
@@ -1384,7 +1381,7 @@ const styles = StyleSheet.create({
     padding: 8,
   },
   skipSecText: {
-    color: '#CBD5E1',
+    color: theme.muted,
     fontSize: 10,
     fontWeight: '700',
     marginTop: 2,
@@ -1393,7 +1390,7 @@ const styles = StyleSheet.create({
     width: 50,
     height: 50,
     borderRadius: 25,
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: theme.surface,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1401,13 +1398,16 @@ const styles = StyleSheet.create({
     width: 68,
     height: 68,
     borderRadius: 34,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: theme.accent,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#818CF8',
+    shadowColor: theme.accent,
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4,
+    shadowOpacity: 0,
     shadowRadius: 12,
-    elevation: 8,
+    elevation: 0,
   },
 });
+
+const lightStyles = createStyles(lightTheme);
+const darkStyles = createStyles(darkTheme);
