@@ -39,7 +39,8 @@
       "orientation": "portrait"
     },
     "plugins": [
-      "expo-sharing"
+      "expo-sharing",
+      "./plugins/withShareReceiver"
     ]
   }
 }

@@ -1,3 +1,4 @@
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getTheme, lightTheme, darkTheme } from '../theme';
 import React, { useState, useEffect, useMemo } from 'react';
 import {
@@ -27,7 +28,6 @@ import {
   deletePlaylist,
   renamePlaylist,
   toggleTrackInPlaylist,
-  fetchDeviceStorageStats,
   trimAudioClip,
 } from '../services/api';
 
@@ -72,6 +72,7 @@ const SORT_OPTIONS = [
 ];
 
 export default function HistoryTab({
+  initialSearch = '',
   isDarkMode,
   onSwitchToDownloader,
   playerState,
@@ -92,7 +93,7 @@ export default function HistoryTab({
   const [sortBy, setSortBy] = useState('date_desc');
   const [showSortBar, setShowSortBar] = useState(false);
 
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState(initialSearch);
 
   // Playlist Oluşturma & Şarkı Seçme Modal State'leri
   const [playlistModalVisible, setPlaylistModalVisible] = useState(false);
@@ -103,7 +104,9 @@ export default function HistoryTab({
   const [quickAddTargetSong, setQuickAddTargetSong] = useState(null);
 
   // Depolama Özeti & Ses Kırpıcı (Zil Sesi) State'leri
-  const [storageStats, setStorageStats] = useState(null);
+  const insets = useSafeAreaInsets();
+  const [showLists, setShowLists] = useState(false);
+  const [showArtists, setShowArtists] = useState(false);
   const [trimModalVisible, setTrimModalVisible] = useState(false);
   const [trimTargetSong, setTrimTargetSong] = useState(null);
   const [trimStartSec, setTrimStartSec] = useState('30');
@@ -113,14 +116,12 @@ export default function HistoryTab({
   const loadHistoryAndPlaylists = async () => {
     setLoading(true);
     try {
-      const [historyData, playlistData, diskStats] = await Promise.all([
+      const [historyData, playlistData] = await Promise.all([
         getLocalHistory(),
         getPlaylists(),
-        fetchDeviceStorageStats(),
       ]);
       setItems(historyData);
       setPlaylists(playlistData);
-      if (diskStats) setStorageStats(diskStats);
     } catch (e) {
       console.warn('Geçmiş veya listeler alınamadı:', e);
     } finally {
@@ -130,12 +131,11 @@ export default function HistoryTab({
 
   useEffect(() => {
     let active = true;
-    Promise.all([getLocalHistory(), getPlaylists(), fetchDeviceStorageStats()])
-      .then(([history, lists, disk]) => {
+    Promise.all([getLocalHistory(), getPlaylists()])
+      .then(([history, lists]) => {
         if (!active) return;
         setItems(history);
         setPlaylists(lists);
-        setStorageStats(disk);
       })
       .catch((error) => console.warn('Arşiv yüklenemedi:', error))
       .finally(() => { if (active) setLoading(false); });
@@ -711,6 +711,7 @@ export default function HistoryTab({
 
           <TouchableOpacity
             style={styles.iconCircleBtn}
+            hitSlop={5}
             accessibilityRole="button"
             accessibilityLabel={`${item.title || item.filename} için işlemler`}
             onPress={() => setMenuItem(item)}
@@ -724,6 +725,17 @@ export default function HistoryTab({
 
   return (
     <View style={[styles.container, isDarkMode && styles.containerDark]}>
+      <FlatList
+        data={filteredAndSortedItems}
+        keyExtractor={(item) => item.id || item.filename}
+        renderItem={renderItem}
+        contentContainerStyle={styles.listContent}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        showsVerticalScrollIndicator={false}
+        refreshing={loading}
+        onRefresh={loadHistoryAndPlaylists}
+        ListHeaderComponent={<>
       {/* Kompakt Üst Başlık */}
       <View style={styles.header}>
         <View style={styles.headerLeftRow}>
@@ -735,9 +747,7 @@ export default function HistoryTab({
               style={[styles.headerSubtitle, isDarkMode && styles.textSecondaryDark]}
             >
               {items.length} parça · {totalDownloadedSizeLabel}
-              {storageStats?.freeGbFormatted
-                ? ` • Boş: ${storageStats.freeGbFormatted}`
-                : ''}
+
             </Text>
           </View>
         </View>
@@ -750,6 +760,7 @@ export default function HistoryTab({
                 isDarkMode && styles.sortToggleBtnDark,
                 showSortBar && styles.sortToggleBtnActive,
               ]}
+              accessibilityLabel={`Sıralama: ${currentSortLabel}`}
               onPress={() => setShowSortBar((prev) => !prev)}
             >
               <Ionicons
@@ -763,15 +774,7 @@ export default function HistoryTab({
                     : theme.accent
                 }
               />
-              <Text
-                style={[
-                  styles.sortToggleText,
-                  isDarkMode && { color: theme.accent },
-                  showSortBar && { color: theme.onAccent },
-                ]}
-              >
-                {currentSortLabel}
-              </Text>
+
             </TouchableOpacity>
           )}
 
@@ -785,21 +788,7 @@ export default function HistoryTab({
             </TouchableOpacity>
           )}
 
-          <TouchableOpacity
-            style={[styles.refreshBtn, isDarkMode && styles.iconActionBtnDark]}
-            onPress={loadHistoryAndPlaylists}
-            disabled={loading}
-          >
-            {loading ? (
-              <ActivityIndicator size="small" color={theme.accent} />
-            ) : (
-              <Ionicons
-                name="refresh"
-                size={16}
-                color={theme.accent}
-              />
-            )}
-          </TouchableOpacity>
+
         </View>
       </View>
 
@@ -932,7 +921,7 @@ export default function HistoryTab({
                 filterType === 'audio' && styles.filterChipTextActive,
               ]}
             >
-              Şarkılar ({audioItems.length})
+              Ses ({audioItems.length})
             </Text>
           </TouchableOpacity>
 
@@ -965,16 +954,29 @@ export default function HistoryTab({
                 filterType === 'video' && styles.filterChipTextActive,
               ]}
             >
-              Videolar ({videoItems.length})
+              Video ({videoItems.length})
             </Text>
           </TouchableOpacity>
         </View>
       )}
 
+      {items.length > 0 && (
+        <View style={styles.libraryTools}>
+          {filterType !== 'video' && <TouchableOpacity hitSlop={4} style={styles.libraryTool} onPress={() => setShowLists((value) => !value)}>
+            <Ionicons name="list-outline" size={14} color={theme.accent} />
+            <Text style={styles.libraryToolText} numberOfLines={1}>{activePlaylistObj?.name || 'Listeler'} ({playlists.length})</Text>
+            <Ionicons name={showLists ? 'chevron-up' : 'chevron-down'} size={12} color={theme.muted} />
+          </TouchableOpacity>}
+          <TouchableOpacity hitSlop={4} style={styles.libraryTool} onPress={() => setShowArtists((value) => !value)}>
+            <Text style={styles.libraryToolText} numberOfLines={1}>{selectedArtist === 'ALL' ? 'Sanatçılar' : selectedArtist}</Text>
+            <Ionicons name={showArtists ? 'chevron-up' : 'chevron-down'} size={12} color={theme.muted} />
+          </TouchableOpacity>
+        </View>
+      )}
       {/* Şarkılar Bölümü: Özel Çalma Listeleri (Playlist) Çubuğu */}
-      {filterType !== 'video' && audioItems.length > 0 && (
+      {showLists && filterType !== 'video' && audioItems.length > 0 && (
         <View style={styles.playlistSectionWrapper}>
-          <Text style={styles.sectionTitle}>Listelerim</Text>
+
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
@@ -999,7 +1001,7 @@ export default function HistoryTab({
               </Text>
             </TouchableOpacity>
 
-            {/* Tüm Şarkılar Seçeneği */}
+            {/* Tümü Seçeneği */}
             {playlists.length > 0 && (
               <TouchableOpacity
                 style={[
@@ -1028,7 +1030,7 @@ export default function HistoryTab({
                       styles.playlistChipTextActive,
                   ]}
                 >
-                  Tüm Şarkılar
+                  Tümü
                 </Text>
               </TouchableOpacity>
             )}
@@ -1073,7 +1075,7 @@ export default function HistoryTab({
             })}
           </ScrollView>
 
-          {/* Seçili Playlist Yönetim Çubuğu (Listeyi Çal | Şarkı Ekle/Çıkar | Sil) */}
+          {/* Seçili Playlist Yönetim Çubuğu (Çal | Şarkı Ekle/Çıkar | Sil) */}
           {activePlaylistObj && (
             <View
               style={[
@@ -1100,7 +1102,7 @@ export default function HistoryTab({
                   onPress={handlePlayAllSongs}
                 >
                   <Ionicons name="play" size={12} color={theme.onAccent} />
-                  <Text style={styles.plActionPlayText}>Listeyi Çal</Text>
+                  <Text style={styles.plActionPlayText}>Çal</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
@@ -1121,7 +1123,7 @@ export default function HistoryTab({
                       isDarkMode && { color: theme.accent },
                     ]}
                   >
-                    Adı / Şarkıları Düzenle
+                    Düzenle
                   </Text>
                 </TouchableOpacity>
 
@@ -1138,7 +1140,7 @@ export default function HistoryTab({
       )}
 
       {/* Sanatçı / Kanal Filtresi */}
-      {artistList.length > 0 && (
+      {showArtists && artistList.length > 0 && (
         <View style={styles.artistFilterWrapper}>
           <ScrollView
             horizontal
@@ -1171,7 +1173,7 @@ export default function HistoryTab({
                   selectedArtist === 'ALL' && styles.artistChipTextActive,
                 ]}
               >
-                Tüm Sanatçılar
+                Tümü
               </Text>
             </TouchableOpacity>
 
@@ -1206,9 +1208,9 @@ export default function HistoryTab({
         </View>
       )}
 
-      {/* Liste veya Boş Durum */}
-      {filteredAndSortedItems.length === 0 ? (
-        <View style={styles.emptyContainer}>
+        </>}
+        ListEmptyComponent={
+<View style={styles.emptyContainer}>
           <Ionicons
             name={
               activePlaylistObj
@@ -1270,21 +1272,13 @@ export default function HistoryTab({
               <Text style={styles.goToDownloadText}>İndir</Text>
             </TouchableOpacity>
           )}
-        </View>
-      ) : (
-        <FlatList
-          data={filteredAndSortedItems}
-          keyExtractor={(i) => i.id || i.filename}
-          renderItem={renderItem}
-          contentContainerStyle={styles.listContent}
-          showsVerticalScrollIndicator={false}
-        />
-      )}
+        </View>}
+      />
 
       <Modal visible={Boolean(menuItem)} transparent animationType="fade" onRequestClose={() => setMenuItem(null)}>
         <View style={styles.actionBackdrop}>
           <TouchableOpacity style={StyleSheet.absoluteFill} accessibilityLabel="Menüyü kapat" onPress={() => setMenuItem(null)} />
-          <View style={styles.actionSheet}>
+          <View style={[styles.actionSheet, { paddingBottom: Math.max(insets.bottom, 12) + 12 }]}>
             <Text style={styles.sectionTitle} numberOfLines={2}>{menuItem?.title || menuItem?.filename}</Text>
             {[
               ...(menuItem && isItemAudio(menuItem) ? [
@@ -1774,16 +1768,19 @@ export default function HistoryTab({
 }
 
 const createStyles = (theme) => StyleSheet.create({
+  libraryTools: { flexDirection: 'row', gap: 12, marginBottom: 6 },
+  libraryTool: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 5, maxWidth: '55%' },
+  libraryToolText: { color: theme.accent, fontSize: 12, flexShrink: 1 },
   sectionTitle: { fontSize: 18, fontWeight: '700', color: theme.text, marginBottom: 10 },
-  playlistCover: { width: 44, height: 44, borderRadius: 10, backgroundColor: theme.accentSoft, alignItems: 'center', justifyContent: 'center' },
+  playlistCover: { width: 28, height: 28, borderRadius: 10, backgroundColor: theme.accentSoft, alignItems: 'center', justifyContent: 'center' },
   actionBackdrop: { flex: 1, backgroundColor: theme.overlay, justifyContent: 'flex-end' },
   actionSheet: { backgroundColor: theme.raised, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, paddingBottom: 40 },
   actionRow: { flexDirection: 'row', alignItems: 'center', gap: 16, minHeight: 52 },
   container: {
     flex: 1,
     backgroundColor: theme.background,
-    paddingHorizontal: 20,
-    paddingTop: 8,
+    paddingHorizontal: 14,
+    paddingTop: 4,
   },
   containerDark: {
     backgroundColor: theme.background,
@@ -1798,14 +1795,15 @@ const createStyles = (theme) => StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 16,
-    flexWrap: 'wrap',
-    gap: 12,
+    marginBottom: 8,
+    flexWrap: 'nowrap',
+    gap: 6,
   },
   headerLeftRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
+    flex: 1,
   },
   backIconBtn: {
     width: 34,
@@ -1827,12 +1825,12 @@ const createStyles = (theme) => StyleSheet.create({
     borderColor: theme.border,
   },
   headerTitle: {
-    fontSize: 28,
+    fontSize: 22,
     fontWeight: '800',
     color: theme.text,
   },
   headerSubtitle: {
-    fontSize: 13,
+    fontSize: 11,
     color: theme.muted,
   },
   headerRightActions: {
@@ -1866,9 +1864,9 @@ const createStyles = (theme) => StyleSheet.create({
     backgroundColor: theme.surface,
     borderWidth: 1,
     borderColor: theme.border,
-    paddingHorizontal: 10,
-    height: 34,
-    borderRadius: 12,
+    paddingHorizontal: 8,
+    height: 30,
+    borderRadius: 8,
   },
   sortToggleBtnDark: {
     backgroundColor: theme.surface,
@@ -1888,9 +1886,9 @@ const createStyles = (theme) => StyleSheet.create({
     alignItems: 'center',
     gap: 4,
     backgroundColor: theme.accent,
-    paddingHorizontal: 11,
-    height: 34,
-    borderRadius: 12,
+    paddingHorizontal: 8,
+    height: 30,
+    borderRadius: 8,
     shadowColor: theme.accent,
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0,
@@ -1898,8 +1896,8 @@ const createStyles = (theme) => StyleSheet.create({
     elevation: 0,
   },
   playAllCompactText: {
-    color: theme.text,
-    fontSize: 13,
+    color: theme.onAccent,
+    fontSize: 12,
     fontWeight: '700',
   },
   refreshBtn: {
@@ -1920,8 +1918,8 @@ const createStyles = (theme) => StyleSheet.create({
     borderWidth: 1,
     borderColor: theme.border,
     paddingHorizontal: 10,
-    height: 48,
-    marginBottom: 16,
+    height: 36,
+    marginBottom: 8,
     gap: 6,
   },
   inlineSearchBoxDark: {
@@ -1930,7 +1928,7 @@ const createStyles = (theme) => StyleSheet.create({
   },
   inlineSearchInput: {
     flex: 1,
-    fontSize: 13,
+    fontSize: 12,
     color: theme.text,
     paddingVertical: 0,
   },
@@ -1978,8 +1976,8 @@ const createStyles = (theme) => StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 4,
-    paddingVertical: 6,
+    gap: 3,
+    paddingVertical: 5,
     borderRadius: 8,
     backgroundColor: theme.surface,
     borderWidth: 1,
@@ -1998,7 +1996,7 @@ const createStyles = (theme) => StyleSheet.create({
     borderColor: theme.accent,
   },
   filterChipText: {
-    fontSize: 13,
+    fontSize: 11,
     fontWeight: '700',
     color: theme.muted,
   },
@@ -2007,7 +2005,7 @@ const createStyles = (theme) => StyleSheet.create({
   },
   // Playlist (Çalma Listeleri) Stilleri
   playlistSectionWrapper: {
-    marginBottom: 16,
+    marginBottom: 6,
   },
   playlistScrollContent: {
     gap: 6,
@@ -2036,14 +2034,14 @@ const createStyles = (theme) => StyleSheet.create({
   playlistChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-    borderRadius: 16,
+    gap: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 10,
     backgroundColor: theme.surface,
     borderWidth: 1,
     borderColor: theme.border,
-    minHeight: 68,
+    minHeight: 38,
   },
   playlistChipDark: {
     backgroundColor: theme.surface,
@@ -2072,8 +2070,10 @@ const createStyles = (theme) => StyleSheet.create({
     borderColor: theme.border,
     borderRadius: 10,
     paddingHorizontal: 10,
-    paddingVertical: 7,
+    paddingVertical: 5,
     marginTop: 6,
+    flexWrap: 'wrap',
+    gap: 6,
   },
   activePlaylistBannerDark: {
     backgroundColor: theme.accentSoft,
@@ -2086,7 +2086,7 @@ const createStyles = (theme) => StyleSheet.create({
     flex: 1,
   },
   activePlaylistTitle: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '800',
     color: theme.accent,
     flex: 1,
@@ -2170,19 +2170,20 @@ const createStyles = (theme) => StyleSheet.create({
     fontWeight: '700',
   },
   listContent: {
-    paddingBottom: 16,
-    gap: 7,
+    paddingBottom: 12,
+    gap: 0,
+    flexGrow: 1,
   },
   compactCard: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: theme.background,
     borderRadius: 0,
-    paddingVertical: 12,
-    paddingHorizontal: 11,
+    paddingVertical: 7,
+    paddingHorizontal: 0,
     borderWidth: 0,
     borderColor: theme.border,
-    gap: 10,
+    gap: 8,
     shadowColor: theme.surface,
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0,
@@ -2295,7 +2296,7 @@ const createStyles = (theme) => StyleSheet.create({
     justifyContent: 'center',
   },
   titleText: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '700',
     color: theme.text,
     marginBottom: 2,
@@ -2326,7 +2327,7 @@ const createStyles = (theme) => StyleSheet.create({
     fontWeight: '700',
   },
   subtitleText: {
-    fontSize: 13,
+    fontSize: 11,
     color: theme.muted,
     flex: 1,
   },
@@ -2336,9 +2337,9 @@ const createStyles = (theme) => StyleSheet.create({
     gap: 5,
   },
   primaryCircleBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
+    width: 32,
+    height: 32,
+    borderRadius: 9,
     alignItems: 'center',
     justifyContent: 'center',
     shadowColor: theme.accent,
@@ -2348,9 +2349,9 @@ const createStyles = (theme) => StyleSheet.create({
     elevation: 0,
   },
   iconCircleBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 11,
+    width: 32,
+    height: 32,
+    borderRadius: 9,
     backgroundColor: theme.surface,
     alignItems: 'center',
     justifyContent: 'center',
@@ -2366,6 +2367,7 @@ const createStyles = (theme) => StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 24,
+    paddingVertical: 24,
   },
   emptyTitle: {
     fontSize: 15.5,

@@ -1,16 +1,18 @@
+import { SafeAreaProvider, SafeAreaView, initialWindowMetrics, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { sharedYouTubeUrl } from './src/services/downloadIdentity';
 import { getTheme, lightTheme, darkTheme } from './src/theme';
 import React, { useState, useEffect, useRef } from 'react';
 import {
+  AppState,
+  Alert,
   StyleSheet,
   View,
   Text,
   TouchableOpacity,
-  SafeAreaView,
   Image,
   Platform,
   NativeModules,
   DeviceEventEmitter,
-  StatusBar as RNStatusBar,
   Modal,
   Animated,
   Easing,
@@ -21,6 +23,7 @@ import { Ionicons } from '@expo/vector-icons';
 import DownloaderTab from './src/components/DownloaderTab';
 import HistoryTab from './src/components/HistoryTab';
 import {
+  restoreDownloads,
   getAudioPlayerState,
   togglePlayPauseAudio,
   nextAudioTrack,
@@ -60,7 +63,15 @@ function formatMs(ms) {
 }
 
 export default function App() {
+  return <SafeAreaProvider initialMetrics={initialWindowMetrics}><MediaToolkitApp /></SafeAreaProvider>;
+}
+
+function MediaToolkitApp() {
+  const insets = useSafeAreaInsets();
   const [activeTab, setActiveTab] = useState('downloader');
+  const [sharedRequest, setSharedRequest] = useState(null);
+  const [archiveSearch, setArchiveSearch] = useState('');
+  const shareSerial = useRef(0);
   const [isDarkMode, setIsDarkMode] = useState(false);
   const theme = getTheme(isDarkMode);
   const styles = isDarkMode ? darkStyles : lightStyles;
@@ -157,6 +168,27 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    let active = true;
+    restoreDownloads().catch((error) => Alert.alert('İndirme sırası yüklenemedi', error.message));
+    const consume = async () => {
+      try {
+        const text = await NativeModules.YoutubeDLNative?.consumeSharedText?.();
+        if (!active || !text) return;
+        const url = sharedYouTubeUrl(text);
+        if (!url) { Alert.alert('Bağlantı bulunamadı', 'Geçerli bir YouTube video veya liste bağlantısı paylaşın.'); return; }
+        shareSerial.current += 1;
+        setSharedRequest({ url, id: shareSerial.current });
+        setExpandedPlayerVisible(false);
+        setActiveTab('downloader');
+      } catch (error) { console.warn('Paylaşılan bağlantı alınamadı:', error); }
+    };
+    const shareSub = DeviceEventEmitter.addListener('onSharedYouTubeText', consume);
+    const appSub = AppState.addEventListener('change', (state) => { if (state === 'active') consume(); });
+    consume();
+    return () => { active = false; shareSub.remove(); appSub.remove(); };
+  }, []);
+
   const handleToggleDarkMode = () => {
     setIsDarkMode((prev) => {
       const next = !prev;
@@ -244,13 +276,16 @@ export default function App() {
       <View style={styles.tabContentArea}>
         {activeTab === 'downloader' ? (
           <DownloaderTab
+            key={sharedRequest?.id || "default"}
+            initialUrl={sharedRequest?.url || ""}
             isDarkMode={isDarkMode}
             playerState={playerState}
             onOpenExpandedPlayer={() => setExpandedPlayerVisible(true)}
-            onSwitchToHistory={() => setActiveTab('history')}
+            onSwitchToHistory={(item) => { setArchiveSearch(item?.title || ''); setSharedRequest(null); setActiveTab('history'); }}
           />
         ) : (
           <HistoryTab
+            initialSearch={archiveSearch}
             isDarkMode={isDarkMode}
             onSwitchToDownloader={() => setActiveTab('downloader')}
             playerState={playerState}
@@ -396,7 +431,7 @@ export default function App() {
             activeTab === 'history' &&
               (isDarkMode ? styles.navItemActiveDark : styles.navItemActive),
           ]}
-          onPress={() => setActiveTab('history')}
+          onPress={() => { setArchiveSearch(''); setSharedRequest(null); setActiveTab('history'); }}
         >
           <Ionicons
             name={activeTab === 'history' ? 'folder' : 'folder-outline'}
@@ -432,7 +467,7 @@ export default function App() {
         onRequestClose={() => setExpandedPlayerVisible(false)}
       >
         <View style={styles.modalBackdrop}>
-          <View style={styles.expandedPlayerSheet}>
+          <View style={[styles.expandedPlayerSheet, { paddingTop: insets.top + 8, paddingBottom: insets.bottom + 12 }]}>
             {/* Üst Bar: Küçült + Başlık + Paylaş */}
             <View style={styles.expandedTopBar}>
               <TouchableOpacity
@@ -861,13 +896,8 @@ const createStyles = (theme) => StyleSheet.create({
   safeContainer: {
     flex: 1,
     backgroundColor: theme.background,
-    paddingTop:
-      Platform.OS === 'android'
-        ? Math.max(0, (RNStatusBar.currentHeight || 20) - 8)
-        : 0,
     width: '100%',
-    height: '100%',
-    ...(Platform.OS === 'web' ? { minHeight: '100vh' } : {}),
+
   },
   safeContainerDark: {
     backgroundColor: theme.background,
@@ -877,10 +907,10 @@ const createStyles = (theme) => StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     marginHorizontal: 14,
-    marginTop: 6,
-    marginBottom: 8,
+    marginTop: 0,
+    marginBottom: 2,
     paddingHorizontal: 4,
-    paddingVertical: 12,
+    paddingVertical: 6,
     borderRadius: 0,
     borderWidth: 0,
     borderColor: theme.border,
@@ -922,7 +952,7 @@ const createStyles = (theme) => StyleSheet.create({
     height: 22,
   },
   brandTitle: {
-    fontSize: 17,
+    fontSize: 16,
     fontWeight: '800',
     color: theme.text,
     letterSpacing: -0.4,
@@ -935,9 +965,9 @@ const createStyles = (theme) => StyleSheet.create({
     alignItems: 'center',
     gap: 6,
     backgroundColor: theme.surface,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 14,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: theme.border,
   },
@@ -946,7 +976,7 @@ const createStyles = (theme) => StyleSheet.create({
     borderColor: theme.border,
   },
   themeToggleText: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '700',
     color: theme.text,
   },
@@ -959,9 +989,9 @@ const createStyles = (theme) => StyleSheet.create({
   // YÜZEN ADA (FLOATING ISLAND) KOYU MİNİ OYNATICI
   miniPlayerContainer: {
     backgroundColor: theme.surface,
-    marginHorizontal: 14,
-    marginBottom: 8,
-    borderRadius: 16,
+    marginHorizontal: 10,
+    marginBottom: 2,
+    borderRadius: 12,
     overflow: 'hidden',
     borderWidth: 1,
     borderColor: theme.border,
@@ -984,9 +1014,9 @@ const createStyles = (theme) => StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    gap: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    gap: 6,
   },
   miniSongInfo: {
     flex: 1,
@@ -995,11 +1025,11 @@ const createStyles = (theme) => StyleSheet.create({
     gap: 10,
   },
   miniVinylDisc: {
-    width: 42,
-    height: 42,
-    borderRadius: 14,
+    width: 32,
+    height: 32,
+    borderRadius: 8,
     backgroundColor: theme.surface,
-    padding: 3,
+    padding: 0,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1.5,
@@ -1037,17 +1067,17 @@ const createStyles = (theme) => StyleSheet.create({
   },
   miniSongMeta: {
     color: theme.muted,
-    fontSize: 13,
+    fontSize: 11,
     marginTop: 2,
   },
   miniControlsRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
+    gap: 2,
   },
   miniCtrlBtn: {
-    width: 40,
-    height: 44,
+    width: 32,
+    height: 36,
     borderRadius: 11,
     backgroundColor: theme.surface,
     alignItems: 'center',
@@ -1062,8 +1092,8 @@ const createStyles = (theme) => StyleSheet.create({
     justifyContent: 'center',
   },
   miniCloseBtn: {
-    width: 40,
-    height: 44,
+    width: 32,
+    height: 36,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1071,13 +1101,13 @@ const createStyles = (theme) => StyleSheet.create({
   bottomNav: {
     flexDirection: 'row',
     backgroundColor: theme.background,
-    marginHorizontal: 14,
-    marginBottom: Platform.OS === 'android' ? 30 : 14,
+    marginHorizontal: 10,
+    marginBottom: 0,
     borderRadius: 0,
     borderWidth: 0,
     borderColor: theme.border,
-    paddingVertical: 7,
-    paddingHorizontal: 10,
+    paddingVertical: 4,
+    paddingHorizontal: 0,
     justifyContent: 'space-around',
     alignItems: 'center',
     shadowColor: theme.surface,
@@ -1098,9 +1128,9 @@ const createStyles = (theme) => StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 7,
-    paddingVertical: 9,
+    paddingVertical: 8,
     marginHorizontal: 4,
-    borderRadius: 16,
+    borderRadius: 12,
   },
   navItemActive: {
     backgroundColor: theme.accentSoft,
@@ -1138,7 +1168,7 @@ const createStyles = (theme) => StyleSheet.create({
   expandedPlayerSheet: {
     flex: 1,
     backgroundColor: theme.background,
-    paddingTop: Platform.OS === 'android' ? (RNStatusBar.currentHeight || 24) + 10 : 40,
+    paddingTop: 12,
     paddingBottom: Platform.OS === 'android' ? 54 : 36,
     paddingHorizontal: 24,
     justifyContent: 'space-between',

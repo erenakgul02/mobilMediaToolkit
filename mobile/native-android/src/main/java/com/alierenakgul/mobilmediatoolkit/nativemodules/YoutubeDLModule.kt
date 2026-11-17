@@ -2,6 +2,7 @@ package com.alierenakgul.mobilmediatoolkit.nativemodules
 
 import android.app.Dialog
 import android.content.Context
+import android.content.ClipData
 import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.content.res.ColorStateList
@@ -47,6 +48,8 @@ import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.VideoView
 import androidx.core.content.FileProvider
+import com.facebook.react.bridge.BaseActivityEventListener
+import org.json.JSONObject
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
@@ -186,8 +189,64 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
     @Volatile
     private var isInitialized = false
 
+    private var pendingShare: String? = null
+    private val shareListener = object : BaseActivityEventListener() {
+        override fun onNewIntent(intent: Intent) {
+            captureShare(intent)
+            try {
+                reactContext.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+                    .emit("onSharedYouTubeText", null)
+            } catch (_: Exception) {
+                // The pending text is consumed when the JS application becomes active.
+            }
+        }
+    }
+
     init {
         MusicPlayerService.reactContextRef = reactContext
+        reactContext.addActivityEventListener(shareListener)
+    }
+
+    @Synchronized
+    private fun captureShare(intent: Intent?) {
+        if (intent?.action != Intent.ACTION_SEND || intent.type != "text/plain") return
+        val text = intent.getStringExtra(Intent.EXTRA_TEXT)?.take(8192)
+        intent.removeExtra(Intent.EXTRA_TEXT)
+        if (!text.isNullOrBlank()) pendingShare = text
+    }
+
+    @ReactMethod
+    fun consumeSharedText(promise: Promise) {
+        reactContext.runOnUiQueueThread {
+            synchronized(this) {
+                captureShare(reactContext.currentActivity?.intent)
+                promise.resolve(pendingShare)
+                pendingShare = null
+            }
+        }
+    }
+
+    override fun invalidate() {
+        reactContext.removeActivityEventListener(shareListener)
+        super.invalidate()
+    }
+
+    private fun resumeDirectory(taskId: String): File {
+        require(Regex("^native_[A-Za-z0-9_]+$").matches(taskId)) { "Geçersiz indirme kimliği" }
+        return File(reactContext.filesDir, "download-resume/$taskId").apply { mkdirs() }
+    }
+
+    @ReactMethod
+    fun discardDownload(taskId: String, promise: Promise) {
+        executor.execute {
+            try { resumeDirectory(taskId).deleteRecursively(); promise.resolve(true) }
+            catch (e: Exception) { promise.reject("CLEANUP_ERROR", e) }
+        }
+    }
+
+    @ReactMethod
+    fun mediaFileExists(path: String, filename: String, promise: Promise) {
+        promise.resolve(resolveExistingFile(path, filename)?.let { it.length() > 0L } ?: false)
     }
 
     override fun getName(): String = "YoutubeDLNative"
@@ -329,9 +388,11 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
     private fun getMimeTypeForFile(file: File): String {
         val ext = file.extension.lowercase()
         return when (ext) {
-            "m4a", "mp4a", "aac" -> "audio/mp4"
+            "m4a", "mp4a" -> "audio/mp4"
+            "aac" -> "audio/aac"
             "mp3" -> "audio/mpeg"
-            "webm", "ogg", "opus" -> "audio/*"
+            "webm" -> "audio/webm"
+            "ogg", "opus" -> "audio/ogg"
             "mp4", "m4v" -> "video/mp4"
             else -> "*/*"
         }
@@ -377,22 +438,28 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
                     Intent(Intent.ACTION_SEND).apply {
                         type = mimeType
                         putExtra(Intent.EXTRA_STREAM, uri)
+                        putExtra(Intent.EXTRA_TITLE, targetFile.name)
+                        clipData = ClipData.newUri(reactContext.contentResolver, targetFile.name, uri)
                         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                     }
                 }
 
                 val chooserTitle = if (actionType == "open") "Medya Oynatıcı Seçin" else "Dosyayı Paylaş"
                 val chooser = Intent.createChooser(intent, chooserTitle).apply {
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    clipData = intent.clipData
                 }
 
-                val currentActivity = reactContext.currentActivity
-                if (currentActivity != null) {
-                    currentActivity.startActivity(chooser)
-                } else {
-                    reactContext.startActivity(chooser)
+                reactContext.runOnUiQueueThread {
+                    try {
+                        val currentActivity = reactContext.currentActivity
+                        if (currentActivity != null) currentActivity.startActivity(chooser)
+                        else reactContext.startActivity(chooser)
+                        promise.resolve(true)
+                    } catch (e: Exception) {
+                        promise.reject("FILE_SHARE_ERROR", "Dosya paylaşım ekranı açılamadı", e)
+                    }
                 }
-                promise.resolve(true)
             } catch (e: Exception) {
                 Log.e(TAG, "openOrShareFile hatası", e)
                 promise.reject("FILE_OPEN_ERROR", e.localizedMessage ?: "Dosya açılamadı", e)
@@ -2156,107 +2223,104 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
         progressStart: Double,
         progressEnd: Double
     ) {
-        if (outputFile.exists()) outputFile.delete()
         val totalBytes = resolveContentLength(streamUrl, expectedLength)
-        val startTimeMs = System.currentTimeMillis()
-        var downloadedBytes = 0L
-
-        fun report(currentBytes: Long) {
-            val elapsedSec = max(0.2, (System.currentTimeMillis() - startTimeMs) / 1000.0)
-            val speedBps = currentBytes / elapsedSec
-            val speedStr = if (speedBps >= 1024 * 1024) {
-                String.format("%.1f MB/s", speedBps / (1024.0 * 1024.0))
-            } else {
-                String.format("%.0f KB/s", speedBps / 1024.0)
-            }
-
-            if (totalBytes > 0L) {
-                val ratio = (currentBytes.toDouble() / totalBytes.toDouble()).coerceIn(0.0, 1.0)
-                val mappedProgress = progressStart + ratio * (progressEnd - progressStart)
-                val remainingBytes = (totalBytes - currentBytes).coerceAtLeast(0L)
-                val etaSec = if (speedBps > 1024) remainingBytes / speedBps else 0.0
-                emitProgress(mappedProgress, etaSec, speedStr)
-            } else {
-                emitProgress((progressStart + progressEnd) / 2.0, 0.0, speedStr)
-            }
+        // Signed URLs expire. Compare stable stream fields before appending to a partial file.
+        val uri = Uri.parse(streamUrl)
+        // The task directory is bound to a source URL. Do not compare the signed
+        // CDN 'id' token: it may change when an expired URL is refreshed.
+        val fields = listOf("itag", "lmt", "clen", "xtags").map { uri.getQueryParameter(it) ?: "" }
+        val signature = fields.joinToString("|") + "|$totalBytes"
+        val meta = File(outputFile.path + ".stream")
+        val canResume = totalBytes > 0L && fields[0].isNotEmpty() && fields[1].isNotEmpty() &&
+            meta.exists() && meta.readText() == signature && outputFile.length() <= totalBytes
+        if (!canResume) {
+            RandomAccessFile(outputFile, "rw").use { it.setLength(0L) }
+            meta.writeText(signature)
         }
-
-        // YouTube hız kısıtlamasını (throttling) aşmak için 2 MB bloklar halinde indir
-        if (totalBytes > 0L) {
-            val chunkSize = 2L * 1024L * 1024L // 2 MB
-            RandomAccessFile(outputFile, "rw").use { raf ->
-                while (downloadedBytes < totalBytes) {
-                    val rangeStart = downloadedBytes
-                    val rangeEnd = minOf(rangeStart + chunkSize - 1L, totalBytes - 1L)
-                    var attempt = 0
-                    var chunkSuccess = false
-                    var lastError: Exception? = null
-
-                    while (attempt < 3 && !chunkSuccess) {
-                        attempt++
-                        val usePost = attempt >= 3
-                        var conn: HttpURLConnection? = null
-                        try {
-                            conn = openStreamConnection(streamUrl, rangeStart, rangeEnd, usePost = usePost)
-                            val code = conn.responseCode
-                            if (code != 206 && code != 200) {
-                                throw IOException("HTTP $code")
-                            }
-
-                            raf.seek(if (code == 206) rangeStart else 0L)
-                            if (code == 200 && rangeStart > 0L) {
-                                downloadedBytes = 0L
-                            }
-
-                            conn.inputStream.use { input ->
-                                val buffer = ByteArray(64 * 1024)
-                                var read: Int
-                                while (input.read(buffer).also { read = it } != -1) {
-                                    raf.write(buffer, 0, read)
-                                    downloadedBytes += read
-                                    report(downloadedBytes)
-                                }
-                            }
-                            chunkSuccess = true
-                            if (code == 200) {
-                                // Sunucu tüm dosyayı tek seferde gönderdi
-                                return
-                            }
-                        } catch (e: Exception) {
-                            lastError = e
-                            Log.w(TAG, "Parça indirme denemesi $attempt başarısız ($rangeStart-$rangeEnd): ${e.message}")
-                            Thread.sleep(300L * attempt)
-                        } finally {
-                            conn?.disconnect()
-                        }
-                    }
-
-                    if (!chunkSuccess) {
-                        throw IOException("Akış indirilemedi: ${lastError?.localizedMessage ?: "Bağlantı hatası"}")
-                    }
-                }
-            }
-        } else {
-            // Boyut bilinmiyorsa doğrudan tek akış olarak indir
-            val conn = openStreamConnection(streamUrl, -1L, -1L, usePost = false)
+        var downloadedBytes = outputFile.length()
+        val initialBytes = downloadedBytes
+        val startTimeMs = System.currentTimeMillis()
+        fun report() {
+            val elapsed = max(0.2, (System.currentTimeMillis() - startTimeMs) / 1000.0)
+            val speed = (downloadedBytes - initialBytes).coerceAtLeast(0L) / elapsed
+            val ratio = if (totalBytes > 0L) (downloadedBytes.toDouble() / totalBytes).coerceIn(0.0, 1.0) else 0.0
+            emitProgress(progressStart + ratio * (progressEnd - progressStart),
+                if (speed > 1024 && totalBytes > 0) (totalBytes - downloadedBytes) / speed else 0.0,
+                if (speed > 0) String.format("%.0f KB/s", speed / 1024) else "Kaldığı yerden devam ediyor...")
+        }
+        report()
+        if (totalBytes <= 0L) {
+            // Without a verified total, restarting is safer than appending unknown representations.
+            val conn = openStreamConnection(streamUrl, -1L, -1L)
             try {
-                val code = conn.responseCode
-                if (code !in 200..299) {
-                    throw IOException("HTTP $code")
-                }
-                FileOutputStream(outputFile).use { fos ->
-                    conn.inputStream.use { input ->
-                        val buffer = ByteArray(64 * 1024)
-                        var read: Int
-                        while (input.read(buffer).also { read = it } != -1) {
-                            fos.write(buffer, 0, read)
-                            downloadedBytes += read
-                            report(downloadedBytes)
-                        }
+                if (conn.responseCode != 200) throw IOException("HTTP ${conn.responseCode}")
+                FileOutputStream(outputFile).use { out -> conn.inputStream.use { input ->
+                    val buffer = ByteArray(64 * 1024)
+                    var read: Int
+                    while (input.read(buffer).also { read = it } != -1) {
+                        out.write(buffer, 0, read); downloadedBytes += read; report()
                     }
+                    out.fd.sync()
+                } }
+            } finally { conn.disconnect() }
+            return
+        }
+        RandomAccessFile(outputFile, "rw").use { file ->
+            while (downloadedBytes < totalBytes) {
+                val start = downloadedBytes
+                val end = minOf(start + 2L * 1024 * 1024 - 1, totalBytes - 1)
+                var success = false
+                var lastError: Exception? = null
+                for (attempt in 1..3) {
+                    var conn: HttpURLConnection? = null
+                    var rollback = start
+                    try {
+                        conn = openStreamConnection(streamUrl, start, end, usePost = attempt == 3)
+                        val code = conn.responseCode
+                        val expected: Long
+                        when (code) {
+                            206 -> {
+                                val range = Regex("bytes (\\d+)-(\\d+)/(\\d+)").matchEntire(conn.getHeaderField("Content-Range") ?: "")
+                                    ?: throw IOException("Geçersiz Content-Range")
+                                if (range.groupValues[1].toLong() != start || range.groupValues[2].toLong() != end || range.groupValues[3].toLong() != totalBytes)
+                                    throw IOException("Akış aralığı değişti; güvenli devam edilemiyor")
+                                expected = end - start + 1
+                            }
+                            200 -> {
+                                rollback = 0L
+                                downloadedBytes = 0L
+                                file.setLength(0L)
+                                expected = totalBytes
+                            }
+                            else -> throw IOException("HTTP $code")
+                        }
+                        file.seek(downloadedBytes)
+                        var received = 0L
+                        conn.inputStream.use { input ->
+                            val buffer = ByteArray(64 * 1024)
+                            var read: Int
+                            while (input.read(buffer).also { read = it } != -1) {
+                                if (received + read > expected) throw IOException("Akış boyutu beklenenden büyük")
+                                file.write(buffer, 0, read)
+                                received += read
+                                downloadedBytes += read
+                                report()
+                            }
+                        }
+                        if (received != expected) throw IOException("Bağlantı kesildi; eksik veri alındı")
+                        file.fd.sync()
+                        success = true
+                        break
+                    } catch (e: Exception) {
+                        lastError = e
+                        file.setLength(rollback)
+                        downloadedBytes = rollback
+                        // A server that ignores Range restarted the file; retry from zero next time.
+                        if (rollback != start) break
+                        if (attempt < 3) Thread.sleep(500L * attempt)
+                    } finally { conn?.disconnect() }
                 }
-            } finally {
-                conn.disconnect()
+                if (!success) throw IOException("İndirme kesildi. Devam edebilirsiniz: ${lastError?.message}")
             }
         }
     }
@@ -2415,17 +2479,36 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
     }
 
     @ReactMethod
-    fun download(url: String, format: String, quality: String, promise: Promise) {
+    fun downloadResumable(url: String, format: String, quality: String, taskId: String, promise: Promise) {
         executor.execute {
-            val tempFiles = mutableListOf<File>()
             try {
+                val workDir = resumeDirectory(taskId)
                 val safeUrl = requireSafeYouTubeUrl(url)
+                val requestKey = "$safeUrl|$format|$quality"
+                val requestFile = File(workDir, "request.txt")
+                if (requestFile.exists() && requestFile.readText() != requestKey) {
+                    throw IOException("İndirme kimliği başka bir içeriğe ait")
+                }
+                requestFile.writeText(requestKey)
+                val receipt = File(workDir, "completed.json")
+                if (receipt.exists()) {
+                    val saved = JSONObject(receipt.readText())
+                    val existing = resolveExistingFile(saved.getString("filePath"), saved.getString("fileName"))
+                    if (existing != null && existing.length() > 0L) {
+                        promise.resolve(Arguments.createMap().apply {
+                            putString("filePath", existing.absolutePath)
+                            putString("fileName", existing.name)
+                            putString("fileSize", formatFileSize(existing.length()))
+                        })
+                        return@execute
+                    }
+                }
                 ensureInit()
                 emitProgress(2.0, 0.0, "Akış çözümleniyor...")
 
                 val info = StreamInfo.getInfo(safeUrl)
                 val downloadDir = getStorageDir()
-                val safeTitle = sanitizeFileName(info.name ?: "YouTube_Medya")
+                val safeTitle = sanitizeFileName(info.name ?: "YouTube_Medya").take(120) + "_" + taskId.removePrefix("native_")
 
                 val isAudioOnly = format.equals("mp3", ignoreCase = true) ||
                     format.equals("m4a", ignoreCase = true) ||
@@ -2439,8 +2522,7 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
 
                     val ext = if (audioStream.format == MediaFormat.M4A) "m4a" else (audioStream.format?.suffix ?: "m4a")
                     finalFile = File(downloadDir, "$safeTitle.$ext")
-                    val tempAudio = File(reactContext.cacheDir, "temp_audio_${System.currentTimeMillis()}.$ext")
-                    tempFiles.add(tempAudio)
+                    val tempAudio = File(workDir, "audio.$ext.part")
 
                     val expectedLen = audioStream.itagItem?.contentLength ?: -1L
                     downloadStreamToFile(audioStream.content, expectedLen, tempAudio, 5.0, 92.0)
@@ -2478,10 +2560,8 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
                         (muxedCandidate == null || adaptiveH >= muxedH)
 
                     if (useAdaptiveMux && adaptiveVideo != null && adaptiveAudio != null) {
-                        val tempVideo = File(reactContext.cacheDir, "temp_vid_${System.currentTimeMillis()}.mp4")
-                        val tempAudio = File(reactContext.cacheDir, "temp_aud_${System.currentTimeMillis()}.m4a")
-                        tempFiles.add(tempVideo)
-                        tempFiles.add(tempAudio)
+                        val tempVideo = File(workDir, "video.mp4.part")
+                        val tempAudio = File(workDir, "audio.m4a.part")
 
                         val vidLen = adaptiveVideo.itagItem?.contentLength ?: -1L
                         val audLen = adaptiveAudio.itagItem?.contentLength ?: -1L
@@ -2493,17 +2573,12 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
                         muxVideoAndAudio(tempVideo, tempAudio, finalFile)
                     } else if (muxedCandidate != null) {
                         val len = muxedCandidate.itagItem?.contentLength ?: -1L
-                        downloadStreamToFile(muxedCandidate.content, len, finalFile, 5.0, 98.0)
+                        val partial = File(workDir, "muxed.mp4.part")
+                        downloadStreamToFile(muxedCandidate.content, len, partial, 5.0, 98.0)
+                        partial.copyTo(finalFile, overwrite = true)
                     } else {
                         throw IOException("Bu video için uygun MP4 akışı bulunamadı.")
                     }
-                }
-
-                // Geçici dosyaları temizle
-                tempFiles.forEach {
-                    try {
-                        if (it.exists()) it.delete()
-                    } catch (_: Exception) {}
                 }
 
                 if (!finalFile.exists() || finalFile.length() == 0L) {
@@ -2531,13 +2606,12 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
                     putString("fileSize", formatFileSize(finalFile.length()))
                     putString("log", "Tamamlandı: ${finalFile.name}")
                 }
+                val receiptTemp = File(workDir, "completed.tmp")
+                receiptTemp.writeText(JSONObject().put("filePath", finalFile.absolutePath).put("fileName", finalFile.name).toString())
+                if (!receiptTemp.renameTo(receipt)) throw IOException("İndirme kaydı yazılamadı")
+                workDir.listFiles()?.filter { it.name !in setOf("completed.json", "request.txt") }?.forEach { it.delete() }
                 promise.resolve(resultMap)
             } catch (e: Exception) {
-                tempFiles.forEach {
-                    try {
-                        if (it.exists()) it.delete()
-                    } catch (_: Exception) {}
-                }
                 Log.e(TAG, "Download hatası", e)
                 promise.reject("DOWNLOAD_ERROR", e.localizedMessage ?: e.message ?: "İndirme başarısız oldu", e)
             }

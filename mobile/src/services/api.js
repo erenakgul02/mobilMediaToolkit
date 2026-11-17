@@ -1,3 +1,4 @@
+import { youtubeVideoId, downloadKey } from './downloadIdentity';
 import { Platform, NativeModules, DeviceEventEmitter, PermissionsAndroid } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system/legacy';
@@ -7,6 +8,7 @@ const LOCAL_HISTORY_KEY = '@mobil_media_toolkit_local_downloads';
 const PLAYLISTS_STORAGE_KEY = '@mobil_media_toolkit_playlists';
 const THEME_STORAGE_KEY = '@mobil_media_toolkit_theme';
 const DEFAULT_PRESET_STORAGE_KEY = '@mobil_media_toolkit_default_preset';
+const QUEUE_STORAGE_KEY = '@mobil_media_toolkit_download_queue_v1';
 const WIFI_ONLY_STORAGE_KEY = '@mobil_media_toolkit_wifi_only';
 
 let wifiOnlyEnabledMemory = false;
@@ -110,6 +112,66 @@ const downloadQueue = [];
 const taskOrderList = [];
 let currentActiveTaskId = null;
 let isProcessingQueue = false;
+
+let queueInitialization = null;
+let queueWrites = Promise.resolve();
+let enqueueChain = Promise.resolve();
+
+function persistQueue() {
+  const snapshot = JSON.stringify(taskOrderList.map((id) => nativeTasks[id]).filter(Boolean));
+  const write = queueWrites.catch(() => {}).then(() => AsyncStorage.setItem(QUEUE_STORAGE_KEY, snapshot));
+  queueWrites = write;
+  return write;
+}
+
+export function initializeDownloadQueue() {
+  if (!queueInitialization) {
+    queueInitialization = (async () => {
+      await getWifiOnlyMode();
+      const raw = await AsyncStorage.getItem(QUEUE_STORAGE_KEY);
+      let saved = [];
+      try { saved = raw ? JSON.parse(raw) : []; } catch { saved = []; }
+      const ordered = (Array.isArray(saved) ? saved : []).filter(Boolean).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+      for (const entry of ordered) {
+        if (!entry || typeof entry.id !== 'string' || !/^native_[A-Za-z0-9_]+$/.test(entry.id) || !youtubeVideoId(entry.cleanUrl) || nativeTasks[entry.id]) continue;
+        const task = { ...entry };
+        if (['downloading', 'processing'].includes(task.status)) {
+          task.status = 'paused';
+          task.error = 'İndirme yarım kaldı. Devam edebilirsiniz.';
+        }
+        if (!['queued', 'paused', 'completed', 'failed'].includes(task.status)) continue;
+        nativeTasks[task.id] = task;
+        taskOrderList.push(task.id);
+      }
+      // Both display and execution use the original enqueue order (FIFO).
+      downloadQueue.push(...taskOrderList.filter((id) => nativeTasks[id].status === 'queued'));
+    })().catch((error) => { queueInitialization = null; throw error; });
+  }
+  return queueInitialization;
+}
+
+export async function restoreDownloads() {
+  await initializeDownloadQueue();
+  void processDownloadQueue();
+}
+
+export async function resumeDownload(taskId) {
+  await initializeDownloadQueue();
+  const task = nativeTasks[taskId];
+  if (!task || !['paused', 'failed'].includes(task.status)) return;
+  task.status = 'queued';
+  task.error = '';
+  if (!downloadQueue.includes(taskId)) downloadQueue.push(taskId);
+  try { await persistQueue(); }
+  catch (error) {
+    const index = downloadQueue.indexOf(taskId);
+    if (index >= 0) downloadQueue.splice(index, 1);
+    task.status = 'paused';
+    task.error = 'İndirme sırası kaydedilemedi. Tekrar deneyin.';
+    throw error;
+  }
+  void processDownloadQueue();
+}
 
 // Android Kotlin motorundan gelen indirme ilerleme olaylarını dinle
 if (Platform.OS === 'android') {
@@ -333,7 +395,7 @@ export async function addLocalHistoryItem(item) {
     return updated;
   } catch (e) {
     console.warn('Lokal geçmişe eklenemedi:', e);
-    return [];
+    throw e;
   }
 }
 
@@ -480,125 +542,109 @@ export async function fetchYouTubePlaylistInfo(url) {
 // ==========================================
 
 async function processDownloadQueue() {
-  if (isProcessingQueue) return;
+  if (isProcessingQueue || !YoutubeDLNative?.downloadResumable) return;
   isProcessingQueue = true;
-
-  while (downloadQueue.length > 0) {
-    const peekTaskId = downloadQueue[0];
-    const peekTask = nativeTasks[peekTaskId];
-    if (!peekTask || peekTask.status === 'cancelled') {
-      downloadQueue.shift();
-      continue;
-    }
-
-    // Yalnızca Wi-Fi'da İndir seçeneği açıksa Wi-Fi bağlantısını kontrol et
-    if (wifiOnlyEnabledMemory) {
-      const onWifi = await checkWifiConnected();
-      if (!onWifi) {
-        peekTask.status = 'queued';
-        peekTask.speed = 'Wi-Fi bağlantısı bekleniyor...';
-        await new Promise((r) => setTimeout(r, 2500));
+  try {
+    while (downloadQueue.length > 0) {
+      const nextTaskId = downloadQueue[0];
+      const task = nativeTasks[nextTaskId];
+      if (!task || task.status === 'cancelled') { downloadQueue.shift(); continue; }
+      if (wifiOnlyEnabledMemory && !(await checkWifiConnected())) {
+        task.speed = 'Wi-Fi bekleniyor';
+        await new Promise((resolve) => setTimeout(resolve, 2500));
         continue;
       }
+      // Cancellation may happen while the Wi-Fi check is awaiting native code.
+      if (task.status !== 'queued') continue;
+      downloadQueue.shift();
+      currentActiveTaskId = nextTaskId;
+      task.status = 'downloading';
+      task.speed = 'Bağlanıyor...';
+      task.error = '';
+      try {
+        // Save before starting native work so process death cannot lose the job.
+        await persistQueue();
+        const result = await YoutubeDLNative.downloadResumable(task.cleanUrl, task.type, task.quality, task.id);
+        task.filename = result.fileName;
+        task.download_url = `file://${result.filePath}`;
+        task.filesize = result.fileSize || '';
+        await addLocalHistoryItem({
+          id: task.id, videoId: youtubeVideoId(task.cleanUrl), sourceUrl: task.cleanUrl,
+          filename: task.filename, title: task.title, uploader: task.uploader,
+          thumbnail: task.thumbnail, type: task.type, quality: task.quality,
+          filesize: task.filesize, download_url: task.download_url,
+          date: 'Bugün', createdAt: new Date().toISOString(),
+        });
+        task.status = 'completed';
+        task.progress = 100;
+        task.speed = 'Tamamlandı';
+        task.eta = '';
+        await persistQueue();
+        // Keep native completion receipts until the user clears the task. This also
+        // covers a JS crash between file publication and history persistence.
+      } catch (error) {
+        task.status = 'paused';
+        task.error = error?.message || 'İndirme kesildi. Devam edebilirsiniz.';
+        task.speed = '';
+        task.eta = '';
+        await persistQueue().catch((err) => console.warn('Kuyruk kaydedilemedi:', err));
+      }
+      currentActiveTaskId = null;
     }
-
-    const nextTaskId = downloadQueue.shift();
-    const task = nativeTasks[nextTaskId];
-    if (!task || task.status === 'cancelled') {
-      continue;
-    }
-
-    currentActiveTaskId = nextTaskId;
-    task.status = 'downloading';
-    task.progress = 0;
-    task.speed = 'Başlatılıyor...';
-    task.eta = '';
-
-    try {
-      const result = await YoutubeDLNative.download(
-        task.cleanUrl,
-        task.type,
-        task.quality
-      );
-      const actualFilename = result.fileName || task.filename;
-      const downloadUrl = result.filePath
-        ? `file://${result.filePath}`
-        : result.outputDir
-        ? `file://${result.outputDir}/${actualFilename}`
-        : '';
-      const filesize = result.fileSize || '';
-
-      task.status = 'completed';
-      task.progress = 100;
-      task.filename = actualFilename;
-      task.download_url = downloadUrl;
-      task.filesize = filesize;
-      task.speed = 'Tamamlandı';
-      task.eta = '';
-
-      await addLocalHistoryItem({
-        id: nextTaskId,
-        filename: actualFilename,
-        title: task.title || 'YouTube Medya',
-        uploader: task.uploader || 'YouTube',
-        thumbnail: task.thumbnail || '',
-        type: task.type,
-        quality: task.quality,
-        filesize: filesize,
-        download_url: downloadUrl,
-        date: 'Bugün',
-        createdAt: new Date().toISOString(),
-      });
-    } catch (err) {
-      console.error('Native indirme hatası:', err);
-      task.status = 'failed';
-      task.error =
-        (err && (err.message || err.toString())) || 'Yerel indirme başarısız oldu.';
-    }
-
+  } finally {
     currentActiveTaskId = null;
+    isProcessingQueue = false;
   }
-
-  isProcessingQueue = false;
 }
 
-export async function startDownload({ url, type, quality, title, thumbnail, uploader }) {
-  const cleanUrl = normalizeUrl(url);
-  const isAudio = type === 'm4a' || type === 'mp3';
-  const ext = isAudio ? 'm4a' : 'mp4';
+export function startDownload(options) {
+  // Serialize duplicate checking and enqueueing, including fast repeated taps.
+  const result = enqueueChain.catch(() => {}).then(() => enqueueDownload(options));
+  enqueueChain = result.then(() => {}, () => {});
+  return result;
+}
 
-  if (YoutubeDLNative && YoutubeDLNative.download) {
-    const taskId = `native_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-    const defaultFilename = `${(title || 'YouTube_Medya').replace(/[\\/:*?"<>|]/g, '_')}.${ext}`;
-    const wasBusy = isProcessingQueue || downloadQueue.length > 0;
-
-    nativeTasks[taskId] = {
-      id: taskId,
-      cleanUrl,
-      status: 'queued',
-      progress: 0,
-      speed: wasBusy ? 'Sırada bekliyor...' : 'Başlatılıyor...',
-      eta: '',
-      title: title || 'YouTube Medya',
-      uploader: uploader || 'YouTube',
-      thumbnail: thumbnail || '',
-      type: isAudio ? 'm4a' : 'mp4',
-      quality: quality,
-      filename: defaultFilename,
-      download_url: '',
-      filesize: '',
-      isNative: true,
-      createdAt: Date.now(),
-    };
-
-    taskOrderList.unshift(taskId);
-    downloadQueue.push(taskId);
-    processDownloadQueue();
-
-    return { taskId, queued: wasBusy };
+async function enqueueDownload({ url, type, quality, title, thumbnail, uploader, force = false }) {
+  await initializeDownloadQueue();
+  const videoId = youtubeVideoId(url);
+  if (!videoId) throw new Error('Geçerli bir YouTube video bağlantısı girin.');
+  const cleanUrl = `https://www.youtube.com/watch?v=${videoId}`;
+  const mediaType = type === 'mp4' ? 'mp4' : 'm4a';
+  if (!YoutubeDLNative?.downloadResumable) throw new Error('Bu özellik için güncel Android APK dosyasını yükleyin.');
+  const key = downloadKey(cleanUrl, mediaType, quality);
+  const existing = Object.values(nativeTasks).find((task) =>
+    ['queued', 'downloading', 'paused', 'failed'].includes(task.status) && downloadKey(task.cleanUrl, task.type, task.quality) === key);
+  if (existing) {
+    if (['paused', 'failed'].includes(existing.status)) await resumeDownload(existing.id);
+    return { taskId: existing.id, alreadyQueued: true, queued: true, duplicate: null };
   }
-
-  throw new Error('Cihaz içi indirme motoru bulunamadı. Lütfen güncel APK dosyasını yükleyin.');
+  if (!force) {
+    for (const item of await getLocalHistory()) {
+      // Older history records have no source ID; never guess from titles.
+      if ((item.videoId || youtubeVideoId(item.sourceUrl)) !== videoId) continue;
+      const exists = await YoutubeDLNative.mediaFileExists(item.download_url || '', item.filename || '');
+      if (exists) return { duplicate: item, taskId: null, alreadyQueued: false, queued: false };
+    }
+  }
+  const taskId = `native_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const wasBusy = isProcessingQueue || downloadQueue.length > 0;
+  nativeTasks[taskId] = {
+    id: taskId, cleanUrl, videoId, status: 'queued', progress: 0,
+    speed: 'Sırada', eta: '', error: '', title: title || 'YouTube Medya',
+    uploader: uploader || 'YouTube', thumbnail: thumbnail || '', type: mediaType,
+    quality, filename: '', download_url: '', filesize: '', isNative: true, createdAt: Date.now(),
+  };
+  taskOrderList.push(taskId);
+  downloadQueue.push(taskId);
+  try { await persistQueue(); }
+  catch (error) {
+    delete nativeTasks[taskId];
+    taskOrderList.splice(taskOrderList.indexOf(taskId), 1);
+    downloadQueue.splice(downloadQueue.indexOf(taskId), 1);
+    throw error;
+  }
+  void processDownloadQueue();
+  return { taskId, queued: wasBusy, alreadyQueued: false, duplicate: null };
 }
 
 export async function checkProgress(taskId) {
@@ -632,28 +678,27 @@ export function getDownloadQueueState() {
   };
 }
 
-export function cancelQueuedDownload(taskId) {
-  const idx = downloadQueue.indexOf(taskId);
-  if (idx >= 0) {
-    downloadQueue.splice(idx, 1);
-  }
-  if (nativeTasks[taskId] && nativeTasks[taskId].status === 'queued') {
-    nativeTasks[taskId].status = 'cancelled';
-  }
-  const orderIdx = taskOrderList.indexOf(taskId);
-  if (orderIdx >= 0) {
-    taskOrderList.splice(orderIdx, 1);
-  }
+export async function cancelQueuedDownload(taskId) {
+  const task = nativeTasks[taskId];
+  if (!task || !['queued', 'paused', 'failed'].includes(task.status)) return getDownloadQueueState();
+  task.status = 'cancelled';
+  const index = downloadQueue.indexOf(taskId);
+  if (index >= 0) downloadQueue.splice(index, 1);
+  const order = taskOrderList.indexOf(taskId);
+  if (order >= 0) taskOrderList.splice(order, 1);
+  await persistQueue();
+  delete nativeTasks[taskId];
+  await YoutubeDLNative?.discardDownload?.(taskId);
   return getDownloadQueueState();
 }
 
-export function clearCompletedDownloadsFromQueue() {
-  for (let i = taskOrderList.length - 1; i >= 0; i--) {
-    const id = taskOrderList[i];
-    const t = nativeTasks[id];
-    if (!t || t.status === 'completed' || t.status === 'failed' || t.status === 'cancelled') {
-      taskOrderList.splice(i, 1);
-    }
+export async function clearCompletedDownloadsFromQueue() {
+  const cleared = taskOrderList.filter((id) => nativeTasks[id]?.status === 'completed');
+  for (const id of cleared) taskOrderList.splice(taskOrderList.indexOf(id), 1);
+  await persistQueue();
+  for (const id of cleared) {
+    delete nativeTasks[id];
+    await YoutubeDLNative?.discardDownload?.(id);
   }
   return getDownloadQueueState();
 }

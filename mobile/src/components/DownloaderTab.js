@@ -11,6 +11,7 @@ import {
   ActivityIndicator,
   Alert,
   Keyboard,
+  Modal,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
@@ -26,6 +27,7 @@ import {
   searchYouTubeVideos,
   isLikelyYouTubeUrl,
   startDownload,
+  resumeDownload,
   getDownloadQueueState,
   cancelQueuedDownload,
   clearCompletedDownloadsFromQueue,
@@ -35,6 +37,7 @@ import {
 } from '../services/api';
 
 export default function DownloaderTab({
+  initialUrl = '',
   isDarkMode,
   playerState,
   onOpenExpandedPlayer,
@@ -42,7 +45,10 @@ export default function DownloaderTab({
 }) {
   const theme = getTheme(isDarkMode);
   const styles = isDarkMode ? darkStyles : lightStyles;
-  const [queryOrUrl, setQueryOrUrl] = useState('');
+  const [queryOrUrl, setQueryOrUrl] = useState(initialUrl);
+  const [activePane, setActivePane] = useState('results');
+  const panelScrollRef = useRef(null);
+  const [duplicateRequest, setDuplicateRequest] = useState(null);
   const [loadingInfo, setLoadingInfo] = useState(false);
   const [quickLinkDownloading, setQuickLinkDownloading] = useState(false);
   const [searchResults, setSearchResults] = useState([]);
@@ -175,6 +181,8 @@ export default function DownloaderTab({
     Keyboard.dismiss();
     setErrorMsg('');
     setLoadingInfo(true);
+    setActivePane('results');
+    panelScrollRef.current?.scrollTo({ y: 0, animated: false });
     setVideoInfo(null);
     setPlaylistInfo(null);
 
@@ -201,11 +209,19 @@ export default function DownloaderTab({
     }
   };
 
+  const requestDownload = async (options) => {
+    const result = await startDownload(options);
+    if (result.duplicate) setDuplicateRequest({ options, item: result.duplicate });
+    return result;
+  };
+
   // YouTube Playlist / Albüm içindeki tüm parçaları seçili otomatik formatla sıraya ekle
   const handleQueueAllPlaylistItems = async () => {
     if (!playlistInfo || !Array.isArray(playlistInfo.items)) return;
     setErrorMsg('');
     let addedCount = 0;
+    let skippedCount = 0;
+    let failedCount = 0;
     for (const item of playlistInfo.items) {
       if (!item.url) continue;
       const alreadyInQueue = queueState.tasks.some(
@@ -213,9 +229,9 @@ export default function DownloaderTab({
           t.cleanUrl === item.url &&
           (t.status === 'downloading' || t.status === 'queued')
       );
-      if (alreadyInQueue) continue;
+      if (alreadyInQueue) { skippedCount++; continue; }
       try {
-        await startDownload({
+        const result = await startDownload({
           url: item.url,
           type: activePreset.type,
           quality: activePreset.quality,
@@ -223,14 +239,15 @@ export default function DownloaderTab({
           thumbnail: item.thumbnail || playlistInfo.thumbnail || '',
           uploader: item.channel || playlistInfo.uploader || 'YouTube',
         });
-        addedCount++;
-      } catch (_) {}
+        if (result.duplicate || result.alreadyQueued) skippedCount++;
+        else addedCount++;
+      } catch (_) { failedCount++; }
     }
     syncQueueState();
-    if (addedCount > 0) {
+    if (addedCount + skippedCount + failedCount > 0) {
       Alert.alert(
         'Sıraya eklendi',
-        `${addedCount} parça (${activePreset.shortLabel}) indirme sırasına eklendi.`
+        `${addedCount} parça sıraya eklendi. ${skippedCount} parça zaten arşivde veya sırada.${failedCount ? ` ${failedCount} parça eklenemedi.` : ''}`
       );
     }
   };
@@ -249,7 +266,7 @@ export default function DownloaderTab({
         info = await fetchVideoInfo(input);
       } catch (_) {}
 
-      await startDownload({
+      await requestDownload({
         url: input,
         type: activePreset.type,
         quality: activePreset.quality,
@@ -270,7 +287,7 @@ export default function DownloaderTab({
     if (!item || !item.url) return;
     setErrorMsg('');
     try {
-      await startDownload({
+      await requestDownload({
         url: item.url,
         type: activePreset.type,
         quality: activePreset.quality,
@@ -339,7 +356,7 @@ export default function DownloaderTab({
     setErrorMsg('');
 
     try {
-      await startDownload({
+      await requestDownload({
         url: targetUrl,
         type: mediaType,
         quality: selectedQuality,
@@ -353,30 +370,30 @@ export default function DownloaderTab({
     }
   };
 
-  const handleCancelQueued = (taskId) => {
-    const nextState = cancelQueuedDownload(taskId);
-    setQueueState(nextState);
+  const handleCancelQueued = async (taskId) => {
+    try { setQueueState(await cancelQueuedDownload(taskId)); }
+    catch (error) { setErrorMsg(error.message); }
   };
 
-  const handleClearFinished = () => {
-    const nextState = clearCompletedDownloadsFromQueue();
-    setQueueState(nextState);
+  const handleClearFinished = async () => {
+    try { setQueueState(await clearCompletedDownloadsFromQueue()); }
+    catch (error) { setErrorMsg(error.message); }
   };
 
   const handleSaveToDevice = async (task) => {
     if (!task || !task.filename) return;
     setSavingTaskId(task.id);
     try {
-      await downloadFileToDevice(task.download_url || '', task.filename, 'open');
+      await downloadFileToDevice(task.download_url || '', task.filename, 'share');
     } catch (err) {
-      Alert.alert('Hata', 'Dosya açılamadı: ' + err.message);
+      Alert.alert('Paylaşım hatası', 'Dosya paylaşılamadı: ' + err.message);
     } finally {
       setSavingTaskId(null);
     }
   };
 
   const hasFinishedTasks = queueState.tasks.some(
-    (t) => t.status === 'completed' || t.status === 'failed'
+    (t) => t.status === 'completed'
   );
 
   const isUrlInput = isLikelyYouTubeUrl(queryOrUrl);
@@ -389,12 +406,8 @@ export default function DownloaderTab({
     isCurrentVideoPreviewing && playerState?.isPlaying;
 
   return (
-    <ScrollView
-      style={[styles.container, isDarkMode && styles.containerDark]}
-      contentContainerStyle={styles.contentContainer}
-      showsVerticalScrollIndicator={false}
-      keyboardShouldPersistTaps="handled"
-    >
+    <View style={[styles.container, isDarkMode && styles.containerDark]}>
+      <View style={styles.searchHeader}>
       <Text style={styles.pageTitle}>İndir</Text>
       {/* Arama Motoru & URL Giriş Kartı */}
       <View style={[styles.card, isDarkMode && styles.cardDark]}>
@@ -501,24 +514,25 @@ export default function DownloaderTab({
         ) : null}
       </View>
 
+      </View>
+      <View style={styles.paneTabs}>
+        {[
+          { id: 'results', label: 'Arama sonuçları' },
+          { id: 'downloads', label: `Anlık indirmeler (${queueState.tasks.filter((task) => task.status !== 'completed').length})` },
+        ].map((pane) => (
+          <TouchableOpacity key={pane.id} accessibilityRole="tab" accessibilityState={{ selected: activePane === pane.id }}
+            style={[styles.paneTab, activePane === pane.id && styles.paneTabSelected]}
+            onPress={() => { setActivePane(pane.id); panelScrollRef.current?.scrollTo({ y: 0, animated: false }); }}>
+            <Text style={[styles.paneLabel, activePane === pane.id && { color: theme.accent }]}>{pane.label}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+      <ScrollView ref={panelScrollRef} style={{ flex: 1 }} contentContainerStyle={styles.contentContainer}
+        keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" showsVerticalScrollIndicator={false}>
+      {activePane === 'results' && <>
       {/* ÜST AÇILIR/KAPANIR OTOMATİK İNDİRME FORMATI SEÇİCİSİ & WI-FI KİLİDİ */}
       <View style={[styles.presetCard, isDarkMode && styles.cardDark]}>
         <View style={styles.presetHeaderRow}>
-          <TouchableOpacity
-            style={styles.presetTitleLeft}
-            activeOpacity={0.78}
-            onPress={() => setPresetMenuOpen((prev) => !prev)}
-          >
-            <Ionicons
-              name="flash"
-              size={15}
-              color={theme.accent}
-            />
-            <Text style={[styles.presetHeaderTitle, isDarkMode && styles.textPrimaryDark]}>
-              İndirme tercihleri
-            </Text>
-          </TouchableOpacity>
-
           <View style={styles.presetHeaderRightGroup}>
             {/* Yalnızca Wi-Fi'da İndir Kilidi */}
             <TouchableOpacity
@@ -769,6 +783,7 @@ export default function DownloaderTab({
                         isDarkMode && styles.previewListenBtnDark,
                         isItemPreviewActive && styles.previewListenBtnActive,
                       ]}
+                      accessibilityLabel={isItemPreviewPlaying ? "Ön dinlemeyi duraklat" : "Ön dinle"}
                       onPress={() => handlePreviewListen(item)}
                       disabled={isPreviewLoading}
                     >
@@ -787,15 +802,6 @@ export default function DownloaderTab({
                                 : theme.accent
                             }
                           />
-                          <Text
-                            style={[
-                              styles.previewListenBtnText,
-                              isDarkMode && { color: theme.accent },
-                              isItemPreviewActive && { color: theme.onAccent },
-                            ]}
-                          >
-                            {isItemPreviewPlaying ? 'Durdur' : 'Ön dinle'}
-                          </Text>
                         </>
                       )}
                     </TouchableOpacity>
@@ -922,6 +928,7 @@ export default function DownloaderTab({
                         isDarkMode && styles.previewListenBtnDark,
                         isItemPreviewActive && styles.previewListenBtnActive,
                       ]}
+                      accessibilityLabel={isItemPreviewPlaying ? "Ön dinlemeyi duraklat" : "Ön dinle"}
                       onPress={() => handlePreviewListen(item)}
                       disabled={isPreviewLoading}
                     >
@@ -949,15 +956,6 @@ export default function DownloaderTab({
                                 : theme.accent
                             }
                           />
-                          <Text
-                            style={[
-                              styles.previewListenBtnText,
-                              isDarkMode && { color: theme.accent },
-                              isItemPreviewActive && { color: theme.onAccent },
-                            ]}
-                          >
-                            {isItemPreviewPlaying ? 'Durdur' : 'Ön dinle'}
-                          </Text>
                         </>
                       )}
                     </TouchableOpacity>
@@ -1254,8 +1252,15 @@ export default function DownloaderTab({
         </View>
       )}
 
+      {!videoInfo && !playlistInfo && searchResults.length === 0 && !loadingInfo && (
+        <Text style={styles.emptyPaneText}>Bir şarkı arayın veya YouTube bağlantısını yapıştırın.</Text>
+      )}
+      </>}
+      {activePane === 'downloads' && queueState.tasks.length === 0 && (
+        <Text style={styles.emptyPaneText}>Henüz bir indirme yok.</Text>
+      )}
       {/* Aktif İndirme ve Bekleyen İndirmeler Kuyruğu */}
-      {queueState.tasks.length > 0 && (
+      {activePane === 'downloads' && queueState.tasks.length > 0 && (
         <View style={[styles.card, isDarkMode && styles.cardDark]}>
           <View style={styles.queueHeaderRow}>
             <View style={styles.queueTitleGroup}>
@@ -1265,7 +1270,7 @@ export default function DownloaderTab({
                 color={theme.accent}
               />
               <Text style={[styles.queueSectionTitle, isDarkMode && styles.textPrimaryDark]}>
-                İndirme sırası ({queueState.tasks.length})
+                İndirme sırası
               </Text>
               {queueState.queuedCount > 0 && (
                 <View style={styles.waitingCountBadge}>
@@ -1281,7 +1286,7 @@ export default function DownloaderTab({
                 style={styles.clearFinishedBtn}
                 onPress={handleClearFinished}
               >
-                <Text style={styles.clearFinishedText}>Tamamlananları Gizle</Text>
+                <Text style={styles.clearFinishedText}>Temizle</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -1396,14 +1401,14 @@ export default function DownloaderTab({
                         numberOfLines={1}
                       >
                         {task.status === 'queued' &&
-                          'Bekleyen indirmelerde sırada bekliyor'}
+                          (task.speed || 'Sırada')}
                         {task.status === 'downloading' &&
                           `İndiriliyor ${task.speed ? '(' + task.speed + ')' : ''}`}
                         {task.status === 'processing' && 'Birleştiriliyor...'}
                         {task.status === 'completed' &&
                           'Arşiv listesine kaydedildi'}
-                        {task.status === 'failed' &&
-                          (task.error || 'İndirme başarısız oldu')}
+                        {['paused', 'failed'].includes(task.status) &&
+                          (task.error || 'İndirme yarım kaldı')}
                       </Text>
                     </View>
 
@@ -1412,7 +1417,21 @@ export default function DownloaderTab({
                     ) : null}
                   </View>
 
-                  {/* Tamamlandıysa: Dosyayı Aç / Paylaş ve Arşive Git */}
+                  {['paused', 'failed'].includes(task.status) && (
+                    <View style={styles.completedActions}>
+                      <TouchableOpacity style={styles.fetchBtn} onPress={async () => {
+                        try { await resumeDownload(task.id); syncQueueState(); }
+                        catch (error) { setErrorMsg(error.message); }
+                      }}>
+                        <Text style={styles.fetchBtnText}>Devam et</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={styles.pasteBtn} onPress={() => handleCancelQueued(task.id)}>
+                        <Text style={{ color: theme.danger }}>İptal et</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+
+                  {/* Tamamlandıysa: Paylaş ve Arşive Git */}
                   {task.status === 'completed' && (
                     <View
                       style={[
@@ -1430,12 +1449,12 @@ export default function DownloaderTab({
                         ) : (
                           <>
                             <Ionicons
-                              name="play-circle-outline"
-                              size={17}
+                              name="share-outline"
+                              size={16}
                               color={theme.onAccent}
                             />
                             <Text style={styles.saveFileBtnText}>
-                              Dosyayı Aç / Paylaş
+                              Paylaş
                             </Text>
                           </>
                         )}
@@ -1446,7 +1465,7 @@ export default function DownloaderTab({
                           styles.historyShortcutBtn,
                           isDarkMode && styles.historyShortcutBtnDark,
                         ]}
-                        onPress={onSwitchToHistory}
+                        onPress={() => onSwitchToHistory()}
                       >
                         <Ionicons
                           name="folder-open-outline"
@@ -1459,7 +1478,7 @@ export default function DownloaderTab({
                             isDarkMode && { color: theme.accent },
                           ]}
                         >
-                          Arşive Git & Oynat
+                          Arşivde aç
                         </Text>
                       </TouchableOpacity>
                     </View>
@@ -1470,12 +1489,40 @@ export default function DownloaderTab({
           </View>
         </View>
       )}
-    </ScrollView>
+      </ScrollView>
+      <Modal visible={Boolean(duplicateRequest)} transparent animationType="fade" onRequestClose={() => setDuplicateRequest(null)}>
+        <View style={{ flex: 1, justifyContent: 'center', padding: 24, backgroundColor: theme.overlay }}>
+          <View style={{ backgroundColor: theme.raised, padding: 20, borderRadius: 20, gap: 14 }}>
+            <Text style={{ color: theme.text, fontSize: 20, fontWeight: '700' }}>Daha önce indirdin</Text>
+            <Text style={{ color: theme.muted }}>{duplicateRequest?.item?.title || 'Bu içerik'} arşivinde bulunuyor.</Text>
+            <TouchableOpacity style={[styles.fetchBtn, { flex: 0 }]} onPress={() => { const item = duplicateRequest?.item; setDuplicateRequest(null); onSwitchToHistory(item); }}>
+              <Text style={styles.fetchBtnText}>Arşivde aç</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.pasteBtn, { flex: 0 }]} onPress={async () => {
+              const options = duplicateRequest?.options;
+              setDuplicateRequest(null);
+              if (!options) return;
+              try { await startDownload({ ...options, force: true }); syncQueueState(); }
+              catch (error) { setErrorMsg(error.message); }
+            }}><Text style={{ color: theme.accent }}>Yeniden indir</Text></TouchableOpacity>
+            <TouchableOpacity onPress={() => setDuplicateRequest(null)} style={{ padding: 12, alignItems: 'center' }}>
+              <Text style={{ color: theme.muted }}>Vazgeç</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+    </View>
   );
 }
 
 const createStyles = (theme) => StyleSheet.create({
-  pageTitle: { fontSize: 28, fontWeight: "700", color: theme.text, marginBottom: 16 },
+  searchHeader: { paddingHorizontal: 14, paddingTop: 4 },
+  paneTabs: { flexDirection: 'row', marginHorizontal: 14, borderBottomWidth: 1, borderBottomColor: theme.border },
+  paneTab: { flex: 1, alignItems: 'center', paddingVertical: 10, borderBottomWidth: 2, borderBottomColor: 'transparent' },
+  paneTabSelected: { borderBottomColor: theme.accent },
+  paneLabel: { color: theme.muted, fontSize: 12, fontWeight: '600' },
+  emptyPaneText: { color: theme.muted, fontSize: 13, textAlign: 'center', paddingVertical: 24 },
+  pageTitle: { fontSize: 22, fontWeight: "700", color: theme.text, marginBottom: 8 },
   container: {
     flex: 1,
     backgroundColor: theme.background,
@@ -1484,9 +1531,9 @@ const createStyles = (theme) => StyleSheet.create({
     backgroundColor: theme.background,
   },
   contentContainer: {
-    paddingHorizontal: 20,
+    paddingHorizontal: 14,
     paddingTop: 8,
-    paddingBottom: 24,
+    paddingBottom: 12,
   },
   textPrimaryDark: {
     color: theme.text,
@@ -1496,12 +1543,12 @@ const createStyles = (theme) => StyleSheet.create({
   },
   // Üst Açılır/Kapanır Bento İndirme Formatı Seçici Stilleri
   presetCard: {
-    backgroundColor: theme.surface,
+    backgroundColor: theme.background,
     borderRadius: 16,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    marginBottom: 12,
-    borderWidth: 1,
+    paddingHorizontal: 0,
+    paddingVertical: 6,
+    marginBottom: 8,
+    borderWidth: 0,
     borderColor: theme.border,
     shadowColor: theme.surface,
     shadowOffset: { width: 0, height: 4 },
@@ -1528,6 +1575,8 @@ const createStyles = (theme) => StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
+    flex: 1,
+    justifyContent: 'space-between',
   },
   wifiTogglePill: {
     flexDirection: 'row',
@@ -1649,7 +1698,7 @@ const createStyles = (theme) => StyleSheet.create({
     backgroundColor: theme.background,
     borderRadius: 16,
     padding: 0,
-    marginBottom: 20,
+    marginBottom: 10,
     borderWidth: 0,
     borderColor: theme.border,
     shadowColor: theme.surface,
@@ -1668,15 +1717,16 @@ const createStyles = (theme) => StyleSheet.create({
     fontWeight: '700',
     color: theme.text,
     marginBottom: 8,
+    display: 'none',
   },
   inputWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: theme.surface,
-    borderRadius: 16,
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: theme.border,
-    paddingHorizontal: 12,
+    paddingHorizontal: 9,
   },
   inputWrapperDark: {
     backgroundColor: theme.surface,
@@ -1687,17 +1737,17 @@ const createStyles = (theme) => StyleSheet.create({
   },
   textInput: {
     flex: 1,
-    height: 46,
+    height: 38,
     color: theme.text,
-    fontSize: 13.5,
+    fontSize: 12,
   },
   clearBtn: {
     padding: 4,
   },
   inputButtonsRow: {
     flexDirection: 'row',
-    gap: 8,
-    marginTop: 10,
+    gap: 6,
+    marginTop: 6,
   },
   pasteBtn: {
     flex: 0.8,
@@ -1706,8 +1756,8 @@ const createStyles = (theme) => StyleSheet.create({
     justifyContent: 'center',
     gap: 5,
     backgroundColor: theme.surface,
-    height: 44,
-    borderRadius: 14,
+    height: 32,
+    borderRadius: 9,
     borderWidth: 1,
     borderColor: theme.border,
   },
@@ -1727,8 +1777,8 @@ const createStyles = (theme) => StyleSheet.create({
     justifyContent: 'center',
     gap: 6,
     backgroundColor: theme.accent,
-    height: 44,
-    borderRadius: 14,
+    height: 32,
+    borderRadius: 9,
     shadowColor: theme.accent,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0,
@@ -1747,8 +1797,8 @@ const createStyles = (theme) => StyleSheet.create({
     justifyContent: 'center',
     gap: 5,
     backgroundColor: theme.accent,
-    height: 44,
-    borderRadius: 14,
+    height: 32,
+    borderRadius: 9,
     shadowColor: theme.accent,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0,
@@ -1793,12 +1843,12 @@ const createStyles = (theme) => StyleSheet.create({
     gap: 6,
   },
   searchResultsTitle: {
-    fontSize: 18,
+    fontSize: 14,
     fontWeight: '800',
     color: theme.text,
   },
   searchResultsHint: {
-    fontSize: 13,
+    fontSize: 10,
     color: theme.muted,
     fontWeight: '600',
   },
@@ -1806,14 +1856,14 @@ const createStyles = (theme) => StyleSheet.create({
     gap: 8,
   },
   searchResultRow: {
-    flexDirection: 'column',
-    alignItems: 'stretch',
+    flexDirection: 'row',
+    alignItems: 'center',
     backgroundColor: theme.surface,
-    borderRadius: 16,
-    padding: 12,
+    borderRadius: 12,
+    padding: 8,
     borderWidth: 1,
     borderColor: theme.border,
-    gap: 12,
+    gap: 6,
   },
   searchResultRowDark: {
     backgroundColor: theme.surface,
@@ -1831,12 +1881,12 @@ const createStyles = (theme) => StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 9,
+    gap: 7,
   },
   searchThumbBox: {
-    width: 64,
-    height: 64,
-    borderRadius: 12,
+    width: 44,
+    height: 44,
+    borderRadius: 8,
     overflow: 'hidden',
     backgroundColor: theme.surface,
     position: 'relative',
@@ -1857,13 +1907,13 @@ const createStyles = (theme) => StyleSheet.create({
     justifyContent: 'center',
   },
   searchResultItemTitle: {
-    fontSize: 15,
+    fontSize: 13,
     fontWeight: '700',
     color: theme.text,
-    lineHeight: 21,
+    lineHeight: 17,
   },
   searchResultSub: {
-    fontSize: 13,
+    fontSize: 11,
     color: theme.muted,
     marginTop: 2,
   },
@@ -1878,9 +1928,9 @@ const createStyles = (theme) => StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 3,
-    height: 44,
-    paddingHorizontal: 16,
-    borderRadius: 12,
+    height: 32,
+    paddingHorizontal: 8,
+    borderRadius: 9,
     backgroundColor: theme.accentSoft,
     borderWidth: 1,
     borderColor: theme.border,
@@ -1903,16 +1953,16 @@ const createStyles = (theme) => StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 3,
-    height: 44,
-    paddingHorizontal: 16,
-    borderRadius: 12,
+    height: 32,
+    paddingHorizontal: 8,
+    borderRadius: 9,
     backgroundColor: theme.accent,
   },
   oneTapDownloadBtnQueued: {
     backgroundColor: theme.accent,
   },
   oneTapDownloadBtnText: {
-    fontSize: 13,
+    fontSize: 11,
     fontWeight: '700',
     color: theme.onAccent,
   },
@@ -2139,7 +2189,7 @@ const createStyles = (theme) => StyleSheet.create({
     gap: 7,
   },
   queueSectionTitle: {
-    fontSize: 18,
+    fontSize: 14,
     fontWeight: '800',
     color: theme.text,
   },
@@ -2171,10 +2221,11 @@ const createStyles = (theme) => StyleSheet.create({
   },
   taskCard: {
     borderRadius: 12,
-    padding: 12,
+    padding: 10,
     borderWidth: 1,
     borderColor: theme.border,
     backgroundColor: theme.surface,
+    marginBottom: 6,
   },
   taskCardDark: {
     backgroundColor: theme.surface,
@@ -2207,7 +2258,7 @@ const createStyles = (theme) => StyleSheet.create({
   },
   typeBadgeText: {
     color: theme.onAccent,
-    fontSize: 13,
+    fontSize: 10,
     fontWeight: '800',
   },
   taskTitle: {
@@ -2241,7 +2292,7 @@ const createStyles = (theme) => StyleSheet.create({
   },
   percentText: {
     color: theme.accent,
-    fontSize: 13.5,
+    fontSize: 12,
     fontWeight: '800',
     marginLeft: 8,
   },
@@ -2273,7 +2324,7 @@ const createStyles = (theme) => StyleSheet.create({
   },
   taskStatusText: {
     color: theme.muted,
-    fontSize: 13,
+    fontSize: 11,
     fontWeight: '600',
     flex: 1,
   },
@@ -2283,8 +2334,8 @@ const createStyles = (theme) => StyleSheet.create({
     fontWeight: '700',
   },
   completedActions: {
-    marginTop: 10,
-    paddingTop: 10,
+    marginTop: 6,
+    paddingTop: 6,
     borderTopWidth: 1,
     borderTopColor: theme.border,
     flexDirection: 'row',
@@ -2300,8 +2351,8 @@ const createStyles = (theme) => StyleSheet.create({
     justifyContent: 'center',
     gap: 6,
     backgroundColor: theme.accent,
-    height: 36,
-    borderRadius: 9,
+    height: 30,
+    borderRadius: 8,
   },
   saveFileBtnText: {
     color: theme.onAccent,
@@ -2314,8 +2365,8 @@ const createStyles = (theme) => StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 5,
-    height: 36,
-    borderRadius: 9,
+    height: 30,
+    borderRadius: 8,
     backgroundColor: theme.accentSoft,
     borderWidth: 1,
     borderColor: theme.border,
