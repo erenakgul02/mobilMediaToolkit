@@ -800,7 +800,8 @@ export async function playVideoInApp(item) {
       item?.download_url || '',
       item?.filename || '',
       item?.title || item?.filename || 'Video',
-      item?.uploader || 'Media Toolkit'
+      item?.uploader || 'Media Toolkit',
+      await getThemeMode()
     );
   }
   return await downloadFileToDevice(item?.download_url, item?.filename, 'open');

@@ -235,3 +235,16 @@ test('moving a legacy private file preserves playlist membership after a name co
   assert.equal(saved[0].title, 'Başlığım');
   assert.deepEqual(JSON.parse(store.get(playlistsKey))[0].trackFilenames, ['song (1).m4a']);
 });
+
+
+test('video bridge receives the saved theme and media identity', async () => {
+  const received = [];
+  const { api } = setup({ native: { playVideoInApp: async (...args) => { received.push(args); return true; } } });
+  const item = { download_url: 'file:///downloads/video.mp4', filename: 'video.mp4', title: 'Video', uploader: 'Artist' };
+  await api.setThemeMode(true);
+  await api.playVideoInApp(item);
+  await api.setThemeMode(false);
+  await api.playVideoInApp(item);
+  assert.deepEqual(received[0], [item.download_url, item.filename, item.title, item.uploader, true]);
+  assert.deepEqual(received[1], [item.download_url, item.filename, item.title, item.uploader, false]);
+});

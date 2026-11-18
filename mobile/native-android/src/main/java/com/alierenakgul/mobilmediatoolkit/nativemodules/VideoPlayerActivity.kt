@@ -4,7 +4,6 @@ import android.app.Activity
 import android.app.PictureInPictureParams
 import android.content.Context
 import android.content.Intent
-import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.content.res.ColorStateList
@@ -39,6 +38,14 @@ class VideoPlayerActivity : Activity() {
     private var lastPipState = ""
     private var resumeAfterStop = false
     private var foregroundVisible = false
+    private val audioEffects = VideoAudioEffects()
+    private var sleepDeadlineMs = 0L
+    private var sleepAtEnd = false
+    private var refreshOptions: (() -> Unit)? = null
+    private var optionsPanel: View? = null
+    private var autoPipConfigured = false
+    private var backCallback: android.window.OnBackInvokedCallback? = null
+    private var switchingToPipSettings = false
     private val pipAction = "com.alierenakgul.mobilmediatoolkit.VIDEO_PIP_TOGGLE"
     private val pipReceiver = object : android.content.BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -68,7 +75,7 @@ class VideoPlayerActivity : Activity() {
                     if (playing) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play),
                 label, label, actionIntent)))
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                setAutoEnterEnabled(playingVideo?.isPlaying == true)
+                setAutoEnterEnabled(playingVideo?.isPlaying == true && !switchingToPipSettings && pipAllowed())
                 setSeamlessResizeEnabled(true)
             }
         }.build()
@@ -81,17 +88,66 @@ class VideoPlayerActivity : Activity() {
         try {
             setPictureInPictureParams(pipParams())
             lastPipState = state
+            autoPipConfigured = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && pipAllowed()
         } catch (_: RuntimeException) { }
     }
 
-    private fun enterVideoPip(showError: Boolean = false) {
-        val entered = if (pipSupported() && !isFinishing) {
-            try { isInPictureInPictureMode || enterPictureInPictureMode(pipParams()) }
+    private fun pipAllowed(): Boolean {
+        if (!pipSupported()) return false
+        val ops = getSystemService(Context.APP_OPS_SERVICE) as android.app.AppOpsManager
+        val mode = ops.checkOpNoThrow(android.app.AppOpsManager.OPSTR_PICTURE_IN_PICTURE, android.os.Process.myUid(), packageName)
+        return mode == android.app.AppOpsManager.MODE_ALLOWED || mode == android.app.AppOpsManager.MODE_DEFAULT
+    }
+
+    private fun enterVideoPip(showError: Boolean = false): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && isInPictureInPictureMode) return true
+        optionsPanel?.visibility = View.GONE
+        refreshOptions?.invoke()
+        val entered = if (pipAllowed() && !isFinishing) {
+            try { enterPictureInPictureMode(pipParams()) }
             catch (_: RuntimeException) { false }
         } else false
-        if (!entered && showError) Toast.makeText(this,
-            "Küçük pencere açılamadı. Cihazın resim içinde resim desteğini ve uygulama iznini kontrol edin.",
-            Toast.LENGTH_LONG).show()
+        if (!entered && showError) {
+            if (!pipSupported()) Toast.makeText(this, "Bu cihaz küçük video penceresini desteklemiyor.", Toast.LENGTH_LONG).show()
+            else android.app.AlertDialog.Builder(this)
+                .setTitle("Küçük pencere izni")
+                .setMessage("Videonun başka uygulamaların üzerinde görünmesi için Media Toolkit'in resim içinde resim iznini açın.")
+                .setNegativeButton("Vazgeç", null)
+                .setPositiveButton("Ayarlara git") { _, _ ->
+                    switchingToPipSettings = true
+                    lastPipState = ""
+                    updatePipParams()
+                    runCatching { startActivity(Intent(android.provider.Settings.ACTION_PICTURE_IN_PICTURE_SETTINGS,
+                        android.net.Uri.parse("package:$packageName"))) }
+                }.show()
+        }
+        return entered
+    }
+
+    private fun leaveVideo() {
+        if (optionsPanel?.visibility == View.VISIBLE) {
+            optionsPanel?.visibility = View.GONE
+            refreshOptions?.invoke()
+            return
+        }
+        if (playingVideo?.isPlaying == true && pipSupported()) { enterVideoPip(true); return }
+        finish()
+    }
+
+    @Deprecated("Handled through OnBackInvokedDispatcher on Android 13+")
+    override fun onBackPressed() { leaveVideo() }
+
+    private fun checkSleepTimer() {
+        if (sleepDeadlineMs == 0L || android.os.SystemClock.elapsedRealtime() < sleepDeadlineMs) return
+        sleepDeadlineMs = 0L
+        sleepAtEnd = false
+        playingVideo?.pause()
+        resumeAfterStop = false
+        savePosition?.invoke()
+        restorePlayerUi?.invoke()
+        refreshOptions?.invoke()
+        updatePipParams()
+        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -99,6 +155,11 @@ class VideoPlayerActivity : Activity() {
         requestWindowFeature(Window.FEATURE_NO_TITLE)
         closeActive()
         active = WeakReference(this)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val callback = android.window.OnBackInvokedCallback { leaveVideo() }
+            backCallback = callback
+            onBackInvokedDispatcher.registerOnBackInvokedCallback(android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT, callback)
+        }
         val filter = android.content.IntentFilter(pipAction)
         androidx.core.content.ContextCompat.registerReceiver(this, pipReceiver, filter,
             androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED)
@@ -116,7 +177,8 @@ class VideoPlayerActivity : Activity() {
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
         // Android 12+ uses auto-enter for smooth gesture navigation.
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S && playingVideo?.isPlaying == true) enterVideoPip()
+        if (!switchingToPipSettings && playingVideo?.isPlaying == true &&
+            (Build.VERSION.SDK_INT < Build.VERSION_CODES.S || !autoPipConfigured)) enterVideoPip()
     }
 
     override fun onPictureInPictureModeChanged(inPip: Boolean, newConfig: Configuration) {
@@ -145,6 +207,9 @@ class VideoPlayerActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        switchingToPipSettings = false
+        lastPipState = ""
+        checkSleepTimer()
         if (resumeAfterStop) { playingVideo?.start(); resumeAfterStop = false }
         restorePlayerUi?.invoke()
         updatePipParams()
@@ -157,6 +222,8 @@ class VideoPlayerActivity : Activity() {
 
     override fun onDestroy() {
         onPlayerClose?.invoke()
+        audioEffects.release()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) backCallback?.let { onBackInvokedDispatcher.unregisterOnBackInvokedCallback(it) }
         runCatching { unregisterReceiver(pipReceiver) }
         playingVideo = null
         if (active.get() === this) active.clear()
@@ -166,8 +233,13 @@ class VideoPlayerActivity : Activity() {
     private fun showPlayer(targetFile: File, title: String, uploader: String) {
         val activity = this
         val uiHandler = Handler(Looper.getMainLooper())
-        val originalOrientation = activity.requestedOrientation
-        var isLandscape = activity.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        val dark = intent.getBooleanExtra("isDarkMode", false)
+        val accent = Color.parseColor(if (dark) "#FF9B45" else "#176B46")
+        val onAccent = Color.parseColor(if (dark) "#16100B" else "#FFFFFF")
+        val surface = Color.parseColor(if (dark) "#181818" else "#F5F7F6")
+        val foreground = Color.parseColor(if (dark) "#F5F5F5" else "#18221D")
+        val border = Color.parseColor(if (dark) "#343434" else "#DDE5E0")
+        var audioPreset = "NORMAL"
         var isMini = false
         var completed = false
         var prepared = false
@@ -265,47 +337,16 @@ class VideoPlayerActivity : Activity() {
             )
         }
 
-        val topFullscreenIconView = PlayerVectorIconView(activity, "fullscreen")
-        val bottomFullscreenIconView = PlayerVectorIconView(activity, "fullscreen")
-        val bottomFullscreenLabelTv = TextView(activity).apply {
-            text = "Tam Ekran"
+        val topPipIconView = PlayerVectorIconView(activity, "pip")
+        val bottomPipIconView = PlayerVectorIconView(activity, "pip")
+        val bottomPipLabelTv = TextView(activity).apply {
+            text = "Küçük pencere"
             setTextColor(Color.WHITE)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
             typeface = Typeface.DEFAULT_BOLD
         }
 
-        fun syncFullscreenUiState() {
-            if (isLandscape) {
-                topFullscreenIconView.updateIcon("exit_fullscreen")
-                bottomFullscreenIconView.updateIcon("exit_fullscreen")
-                bottomFullscreenLabelTv.text = "Tam Ekrandan Çık"
-            } else {
-                topFullscreenIconView.updateIcon("fullscreen")
-                bottomFullscreenIconView.updateIcon("fullscreen")
-                bottomFullscreenLabelTv.text = "Tam Ekran"
-            }
-        }
-
-        fun toggleOrientation() {
-            isLandscape = !isLandscape
-            syncFullscreenUiState()
-            activity.requestedOrientation = if (isLandscape) {
-                ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-            } else {
-                originalOrientation
-            }
-            for (delayMs in listOf(80L, 220L, 420L)) {
-                uiHandler.postDelayed({
-                    if (!isFinishing) {
-                        applyImmersiveFullscreen(window)
-                        updateVideoBounds()
-                        rootLayout.requestLayout()
-                    }
-                }, delayMs)
-            }
-        }
-
-        // 1. ÜST SİNEMA GRADYAN BARI (Geri İkonu + Başlık + Tam Ekran İkonu)
+        // 1. ÜST SİNEMA GRADYAN BARI (Geri İkonu + Başlık + Küçük Pencere İkonu)
         val topBar = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -336,7 +377,7 @@ class VideoPlayerActivity : Activity() {
                 )
             )
             setOnClickListener {
-                finish()
+                leaveVideo()
             }
         }
 
@@ -368,7 +409,8 @@ class VideoPlayerActivity : Activity() {
         titleCol.addView(titleTv)
         titleCol.addView(subTv)
 
-        val fullscreenTopBtn = FrameLayout(activity).apply {
+        val pipTopBtn = FrameLayout(activity).apply {
+            contentDescription = "Küçük pencere"
             layoutParams = LinearLayout.LayoutParams(dpToPx(42), dpToPx(42))
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
@@ -376,20 +418,20 @@ class VideoPlayerActivity : Activity() {
                 setStroke(dpToPx(1), Color.parseColor("#33FFFFFF"))
             }
             addView(
-                topFullscreenIconView,
+                topPipIconView,
                 FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.MATCH_PARENT
                 )
             )
             setOnClickListener {
-                toggleOrientation()
+                enterVideoPip(true)
             }
         }
 
         topBar.addView(backBtnHolder)
         topBar.addView(titleCol)
-        topBar.addView(fullscreenTopBtn)
+        topBar.addView(pipTopBtn)
         overlayContainer.addView(topBar)
 
         // 2. MERKEZ YÜZEN OYNATMA KONTROLLERİ (YouTube / Netflix tarzı yuvarlak cam butonlar)
@@ -427,7 +469,7 @@ class VideoPlayerActivity : Activity() {
             layoutParams = LinearLayout.LayoutParams(dpToPx(70), dpToPx(70))
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
-                setColor(Color.parseColor("#E6B45C16"))
+                setColor(accent)
                 setStroke(dpToPx(2), Color.parseColor("#66FFFFFF"))
             }
             addView(
@@ -493,7 +535,7 @@ class VideoPlayerActivity : Activity() {
 
         val seekBar = SeekBar(activity).apply {
             max = 1000
-            progressTintList = ColorStateList.valueOf(Color.parseColor("#FF9B45"))
+            progressTintList = ColorStateList.valueOf(accent)
             thumbTintList = ColorStateList.valueOf(Color.WHITE)
             progressBackgroundTintList = ColorStateList.valueOf(Color.parseColor("#4DFFFFFF"))
             layoutParams = LinearLayout.LayoutParams(
@@ -550,7 +592,7 @@ class VideoPlayerActivity : Activity() {
         timeLeftContainer.addView(slashTv)
         timeLeftContainer.addView(totalTimeTv)
 
-        val rotatePillBtn = LinearLayout(activity).apply {
+        val pipPillBtn = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dpToPx(12), dpToPx(6), dpToPx(12), dpToPx(6))
@@ -559,24 +601,24 @@ class VideoPlayerActivity : Activity() {
                 cornerRadius = dpToPx(8).toFloat()
             }
             addView(
-                bottomFullscreenIconView,
+                bottomPipIconView,
                 LinearLayout.LayoutParams(dpToPx(18), dpToPx(18)).apply {
                     marginEnd = dpToPx(6)
                 }
             )
-            addView(bottomFullscreenLabelTv)
+            addView(bottomPipLabelTv)
             setOnClickListener {
-                toggleOrientation()
+                enterVideoPip(true)
             }
         }
 
         val speedButton = TextView(activity).apply {
-            text = "1×"
-            contentDescription = "Video oynatma hızı"
+            text = "1× · EQ"
+            contentDescription = "Çalma hızı ve ses ayarları"
             gravity = Gravity.CENTER
             setTextColor(Color.WHITE)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-            layoutParams = LinearLayout.LayoutParams(dpToPx(52), dpToPx(36)).apply { marginEnd = dpToPx(6) }
+            layoutParams = LinearLayout.LayoutParams(dpToPx(92), dpToPx(44)).apply { marginEnd = dpToPx(6) }
             isEnabled = false
         }
         fun applyVideoSpeed(speed: Float): Boolean {
@@ -587,7 +629,7 @@ class VideoPlayerActivity : Activity() {
                 player.playbackParams = android.media.PlaybackParams().setSpeed(speed).setPitch(1f)
                 if (!wasPlaying) videoView.pause()
                 videoSpeed = speed
-                speedButton.text = when (speed) { 0.75f -> "0.75×"; 1.5f -> "1.5×"; 2f -> "2×"; else -> "1×" }
+                speedButton.text = "${speed}× · EQ"
                 true
             } catch (_: Exception) {
                 if (!wasPlaying) runCatching { videoView.pause() }
@@ -595,26 +637,119 @@ class VideoPlayerActivity : Activity() {
                 false
             }
         }
-        speedButton.setOnClickListener {
-            val speeds = listOf(0.75f, 1f, 1.5f, 2f)
-            val labels = listOf("0.75×", "1× (Normal)", "1.5×", "2×")
-            android.widget.PopupMenu(activity, speedButton).apply {
-                speeds.forEachIndexed { index, speed ->
-                    menu.add(0, index, index, labels[index]).apply {
-                        isCheckable = true
-                        isChecked = videoSpeed == speed
-                    }
-                }
-                setOnMenuItemClickListener { item -> applyVideoSpeed(speeds[item.itemId]); true }
-                show()
+        val sleepButton = TextView(activity).apply {
+            text = "Uyku"
+            gravity = Gravity.CENTER
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            layoutParams = LinearLayout.LayoutParams(0, dpToPx(44), 1f).apply { marginEnd = dpToPx(6) }
+        }
+        fun styleChip(view: TextView, selected: Boolean) {
+            view.setTextColor(if (selected) onAccent else foreground)
+            view.background = GradientDrawable().apply {
+                setColor(if (selected) accent else surface)
+                cornerRadius = dpToPx(12).toFloat()
+                setStroke(dpToPx(1), if (selected) accent else border)
             }
         }
+        val panelContent = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dpToPx(12), dpToPx(8), dpToPx(12), dpToPx(12))
+        }
+        val panel = ScrollView(activity).apply {
+            visibility = View.GONE
+            background = GradientDrawable().apply {
+                setColor(surface)
+                cornerRadius = dpToPx(16).toFloat()
+                setStroke(dpToPx(1), border)
+            }
+            addView(panelContent)
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dpToPx(210)).apply { topMargin = dpToPx(8) }
+        }
+        optionsPanel = panel
+        var panelMode = "sound"
+        fun heading(label: String) {
+            panelContent.addView(TextView(activity).apply {
+                text = label
+                setTextColor(accent)
+                setTypeface(null, android.graphics.Typeface.BOLD)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                setPadding(0, dpToPx(5), 0, dpToPx(7))
+            })
+        }
+        fun choices(labels: List<String>, selected: Int, select: (Int) -> Unit) {
+            val row = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
+            labels.forEachIndexed { index, label ->
+                row.addView(TextView(activity).apply {
+                    text = label
+                    gravity = Gravity.CENTER
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                    setTypeface(null, android.graphics.Typeface.BOLD)
+                    layoutParams = LinearLayout.LayoutParams(0, dpToPx(48), 1f).apply {
+                        if (index > 0) marginStart = dpToPx(5)
+                    }
+                    styleChip(this, selected == index)
+                    setOnClickListener { select(index); refreshOptions?.invoke() }
+                })
+            }
+            panelContent.addView(row)
+        }
+        refreshOptions = {
+            styleChip(speedButton, panel.visibility == View.VISIBLE && panelMode == "sound")
+            styleChip(sleepButton, sleepDeadlineMs > 0 || sleepAtEnd)
+            sleepButton.text = if (sleepAtEnd) "Video sonu" else if (sleepDeadlineMs > 0) "Uyku açık" else "Uyku"
+            centerControlsRow.visibility = if (panel.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+            if (panel.visibility == View.VISIBLE) {
+                panelContent.removeAllViews()
+                if (panelMode == "sound") {
+                    heading("Çalma hızı")
+                    val speeds = listOf(0.75f, 1f, 1.5f, 2f)
+                    choices(listOf("0.75×", "1×", "1.5×", "2×"), speeds.indexOf(videoSpeed)) { applyVideoSpeed(speeds[it]) }
+                    heading("Ses ayarları")
+                    val presets = listOf("NORMAL", "BASS", "VOCAL", "LOUD")
+                    choices(listOf("Normal", "Bas+", "Vokal", "Yüksek ses"), presets.indexOf(audioPreset)) {
+                        val preset = presets[it]
+                        if (audioEffects.apply(videoPlayer?.audioSessionId ?: 0, preset)) audioPreset = preset
+                        else {
+                            audioPreset = "NORMAL"
+                            Toast.makeText(activity, "Bu cihazda bu ses ayarı desteklenmiyor.", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                } else {
+                    heading("Uyku zamanlayıcısı")
+                    val remaining = ((sleepDeadlineMs - android.os.SystemClock.elapsedRealtime()).coerceAtLeast(0) + 59999) / 60000
+                    heading(if (sleepAtEnd) "Video bittiğinde duracak" else if (sleepDeadlineMs > 0) "$remaining dakika sonra duracak" else "Oynatma otomatik durdurulsun")
+                    choices(listOf("15 dk", "30 dk", "60 dk"), -1) {
+                        sleepDeadlineMs = android.os.SystemClock.elapsedRealtime() + listOf(15L, 30L, 60L)[it] * 60000L
+                        sleepAtEnd = false
+                    }
+                    heading("Diğer seçenekler")
+                    choices(listOf("Kapalı", "Video sonu"), if (sleepAtEnd) 1 else if (sleepDeadlineMs == 0L) 0 else -1) {
+                        sleepDeadlineMs = 0L
+                        sleepAtEnd = it == 1
+                    }
+                }
+            }
+        }
+        fun togglePanel(mode: String) {
+            panel.visibility = if (panel.visibility == View.VISIBLE && panelMode == mode) View.GONE else View.VISIBLE
+            panelMode = mode
+            refreshOptions?.invoke()
+        }
+        speedButton.setOnClickListener { togglePanel("sound") }
+        sleepButton.setOnClickListener { togglePanel("sleep") }
         bottomMetaRow.addView(timeLeftContainer)
-        bottomMetaRow.addView(speedButton)
-        bottomMetaRow.addView(rotatePillBtn)
-
+        val optionsRow = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        optionsRow.addView(sleepButton)
+        optionsRow.addView(speedButton)
+        optionsRow.addView(pipPillBtn)
         bottomBar.addView(seekBar)
         bottomBar.addView(bottomMetaRow)
+        bottomBar.addView(optionsRow)
+        bottomBar.addView(panel)
+        refreshOptions?.invoke()
         overlayContainer.addView(bottomBar)
         rootLayout.addView(overlayContainer)
 
@@ -642,26 +777,17 @@ class VideoPlayerActivity : Activity() {
                 videoView.start()
                 playPauseIconView.updateIcon("pause")
             }
+            updatePipParams()
         }
-
-        val minimizeButton = TextView(activity).apply {
-            text = "Küçült"
-            contentDescription = "Mini oynatıcıya geç"
-            gravity = Gravity.CENTER
-            setTextColor(Color.WHITE)
-            layoutParams = LinearLayout.LayoutParams(dpToPx(58), dpToPx(42))
-            setOnClickListener { enterVideoPip(true) }
-        }
-        topBar.addView(minimizeButton, topBar.childCount - 1)
 
         // Ekran boyutu veya yönü değiştiğinde (döndürüldüğünde) video oranını koruyarak yeniden boyutlandır
         rootLayout.addOnLayoutChangeListener { _, left, top, right, bottom, _, _, _, _ ->
             val newW = (right - left).coerceAtLeast(0)
             val newH = (bottom - top).coerceAtLeast(0)
             uiHandler.post {
-                isLandscape = newW > newH
-                syncFullscreenUiState()
                 if (!isMini) applyImmersiveFullscreen(window)
+                val panelHeight = minOf(dpToPx(245), (newH * 0.45f).toInt())
+                if (panel.layoutParams.height != panelHeight) panel.layoutParams = panel.layoutParams.apply { height = panelHeight }
                 updateVideoBounds(newW, newH)
             }
         }
@@ -768,7 +894,10 @@ class VideoPlayerActivity : Activity() {
             override fun run() {
                 if (!isFinishing) {
                     try {
+                        checkSleepTimer()
                         updatePipParams()
+                        if (videoView.isPlaying) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                        else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                         if (System.currentTimeMillis() - lastSaveTime >= 2000L) {
                             saveVideoPosition()
                             lastSaveTime = System.currentTimeMillis()
@@ -788,6 +917,7 @@ class VideoPlayerActivity : Activity() {
 
         videoView.setOnPreparedListener { mp ->
             videoPlayer = mp
+            if (!audioEffects.apply(mp.audioSessionId, audioPreset)) audioPreset = "NORMAL"
             speedButton.isEnabled = Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
             durationMs = mp.duration.coerceAtLeast(0)
             if (!prepared) {
@@ -822,6 +952,9 @@ class VideoPlayerActivity : Activity() {
 
         videoView.setOnCompletionListener {
             completed = true
+            sleepAtEnd = false
+            sleepDeadlineMs = 0L
+            refreshOptions?.invoke()
             updatePipParams()
             resumePrefs.edit().remove(resumeKey).apply()
             playPauseIconView.updateIcon("play")
@@ -842,6 +975,8 @@ class VideoPlayerActivity : Activity() {
             overlayContainer.visibility = if (inPip) View.GONE else View.VISIBLE
             overlayContainer.alpha = 1f
             doubleTapFeedbackTv.visibility = View.GONE
+            optionsPanel?.visibility = View.GONE
+            refreshOptions?.invoke()
             if (!inPip) applyImmersiveFullscreen(window)
             rootLayout.post { updateVideoBounds() }
         }
@@ -953,6 +1088,10 @@ class VideoPlayerActivity : Activity() {
             val cy = h / 2f
 
             when (iconType) {
+                "pip" -> {
+                    canvas.drawRoundRect(RectF(w * 0.18f, h * 0.22f, w * 0.82f, h * 0.78f), 3f, 3f, strokePaint)
+                    canvas.drawRect(w * 0.48f, h * 0.49f, w * 0.75f, h * 0.70f, fillPaint)
+                }
                 "back" -> {
                     // Sol ok (Arrow Left)
                     val s = minOf(w, h) * 0.28f

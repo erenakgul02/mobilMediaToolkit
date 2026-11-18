@@ -517,6 +517,7 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
         filename: String,
         title: String,
         uploader: String,
+        isDarkMode: Boolean,
         promise: Promise
     ) {
         executor.execute {
@@ -527,7 +528,8 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
                     targetFile,
                     title.ifBlank { filename },
                     uploader.ifBlank { "Media Toolkit" },
-                    promise
+                    promise,
+                    isDarkMode
                 )
             } catch (e: Exception) {
                 Log.e(TAG, "playVideoInApp hatası", e)
@@ -536,7 +538,7 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
         }
     }
 
-    private fun playVideoInAppInternal(targetFile: File, title: String, uploader: String, promise: Promise) {
+    private fun playVideoInAppInternal(targetFile: File, title: String, uploader: String, promise: Promise, isDarkMode: Boolean = false) {
         val activity = reactContext.currentActivity
         if (activity == null) { promise.reject("NO_ACTIVITY", "Aktif ekran bulunamadı."); return }
         reactContext.runOnUiQueueThread {
@@ -545,6 +547,7 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
                     putExtra("filePath", targetFile.absolutePath)
                     putExtra("title", title)
                     putExtra("uploader", uploader)
+                    putExtra("isDarkMode", isDarkMode)
                 })
                 promise.resolve(true)
             } catch (e: Exception) {

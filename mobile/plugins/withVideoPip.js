@@ -9,6 +9,7 @@ module.exports = function withVideoPip(config) {
     if (!player) { player = { $: { 'android:name': name } }; activities.push(player); }
     Object.assign(player.$, {
       'android:exported': 'false',
+      'android:enableOnBackInvokedCallback': 'true',
       'android:supportsPictureInPicture': 'true',
       'android:resizeableActivity': 'true',
       'android:screenOrientation': 'unspecified',
