@@ -46,6 +46,8 @@ class VideoPlayerActivity : Activity() {
     private var autoPipConfigured = false
     private var backCallback: android.window.OnBackInvokedCallback? = null
     private var switchingToPipSettings = false
+    private var rotationListener: OrientationEventListener? = null
+    private var manualOrientation = Configuration.ORIENTATION_UNDEFINED
     private val pipAction = "com.alierenakgul.mobilmediatoolkit.VIDEO_PIP_TOGGLE"
     private val pipReceiver = object : android.content.BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -223,6 +225,7 @@ class VideoPlayerActivity : Activity() {
     override fun onDestroy() {
         onPlayerClose?.invoke()
         audioEffects.release()
+        rotationListener?.disable()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) backCallback?.let { onBackInvokedDispatcher.unregisterOnBackInvokedCallback(it) }
         runCatching { unregisterReceiver(pipReceiver) }
         playingVideo = null
@@ -235,10 +238,21 @@ class VideoPlayerActivity : Activity() {
         val uiHandler = Handler(Looper.getMainLooper())
         val dark = intent.getBooleanExtra("isDarkMode", false)
         val accent = Color.parseColor(if (dark) "#FF9B45" else "#176B46")
-        val onAccent = Color.parseColor(if (dark) "#16100B" else "#FFFFFF")
-        val surface = Color.parseColor(if (dark) "#181818" else "#F5F7F6")
-        val foreground = Color.parseColor(if (dark) "#F5F5F5" else "#18221D")
-        val border = Color.parseColor(if (dark) "#343434" else "#DDE5E0")
+        val surface = Color.parseColor("#99202528")
+        val border = Color.parseColor("#30FFFFFF")
+        val originalOrientation = requestedOrientation
+        rotationListener = object : OrientationEventListener(this) {
+            override fun onOrientationChanged(angle: Int) {
+                if (angle == ORIENTATION_UNKNOWN || manualOrientation == Configuration.ORIENTATION_UNDEFINED) return
+                val upright = angle < 20 || angle > 340
+                val sideways = angle in 70..110 || angle in 250..290
+                if ((manualOrientation == Configuration.ORIENTATION_PORTRAIT && upright) ||
+                    (manualOrientation == Configuration.ORIENTATION_LANDSCAPE && sideways)) {
+                    manualOrientation = Configuration.ORIENTATION_UNDEFINED
+                    requestedOrientation = originalOrientation
+                }
+            }
+        }.also { if (it.canDetectOrientation()) it.enable() }
         var audioPreset = "NORMAL"
         var isMini = false
         var completed = false
@@ -338,9 +352,9 @@ class VideoPlayerActivity : Activity() {
         }
 
         val topPipIconView = PlayerVectorIconView(activity, "pip")
-        val bottomPipIconView = PlayerVectorIconView(activity, "pip")
-        val bottomPipLabelTv = TextView(activity).apply {
-            text = "Küçük pencere"
+        val fullscreenIconView = PlayerVectorIconView(activity, "fullscreen")
+        val fullscreenLabelTv = TextView(activity).apply {
+            text = "Tam ekran"
             setTextColor(Color.WHITE)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
             typeface = Typeface.DEFAULT_BOLD
@@ -354,7 +368,7 @@ class VideoPlayerActivity : Activity() {
                 GradientDrawable.Orientation.TOP_BOTTOM,
                 intArrayOf(Color.parseColor("#E6000000"), Color.TRANSPARENT)
             )
-            setPadding(dpToPx(18), dpToPx(18), dpToPx(18), dpToPx(28))
+            setPadding(dpToPx(12), dpToPx(10), dpToPx(12), dpToPx(12))
             layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -448,8 +462,8 @@ class VideoPlayerActivity : Activity() {
         val playPauseIconView = PlayerVectorIconView(activity, "pause")
 
         val rwCircleBtn = FrameLayout(activity).apply {
-            layoutParams = LinearLayout.LayoutParams(dpToPx(54), dpToPx(54)).apply {
-                marginEnd = dpToPx(28)
+            layoutParams = LinearLayout.LayoutParams(dpToPx(44), dpToPx(44)).apply {
+                marginEnd = dpToPx(16)
             }
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
@@ -466,10 +480,10 @@ class VideoPlayerActivity : Activity() {
         }
 
         val playPauseCircleBtn = FrameLayout(activity).apply {
-            layoutParams = LinearLayout.LayoutParams(dpToPx(70), dpToPx(70))
+            layoutParams = LinearLayout.LayoutParams(dpToPx(52), dpToPx(52))
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
-                setColor(accent)
+                setColor(Color.parseColor("#80303436"))
                 setStroke(dpToPx(2), Color.parseColor("#66FFFFFF"))
             }
             addView(
@@ -482,8 +496,8 @@ class VideoPlayerActivity : Activity() {
         }
 
         val ffCircleBtn = FrameLayout(activity).apply {
-            layoutParams = LinearLayout.LayoutParams(dpToPx(54), dpToPx(54)).apply {
-                marginStart = dpToPx(28)
+            layoutParams = LinearLayout.LayoutParams(dpToPx(44), dpToPx(44)).apply {
+                marginStart = dpToPx(16)
             }
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
@@ -509,9 +523,9 @@ class VideoPlayerActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             background = GradientDrawable(
                 GradientDrawable.Orientation.BOTTOM_TOP,
-                intArrayOf(Color.parseColor("#E6000000"), Color.TRANSPARENT)
+                intArrayOf(Color.parseColor("#66000000"), Color.TRANSPARENT)
             )
-            setPadding(dpToPx(18), dpToPx(28), dpToPx(18), dpToPx(22))
+            setPadding(dpToPx(10), dpToPx(4), dpToPx(10), dpToPx(8))
             layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -535,12 +549,28 @@ class VideoPlayerActivity : Activity() {
 
         val seekBar = SeekBar(activity).apply {
             max = 1000
+            val track = GradientDrawable().apply { setColor(Color.parseColor("#55FFFFFF")); cornerRadius = dpToPx(2).toFloat() }
+            val progressTrack = android.graphics.drawable.ClipDrawable(
+                GradientDrawable().apply { setColor(accent); cornerRadius = dpToPx(2).toFloat() },
+                Gravity.LEFT, android.graphics.drawable.ClipDrawable.HORIZONTAL)
+            progressDrawable = android.graphics.drawable.LayerDrawable(arrayOf(track, progressTrack)).apply {
+                setId(0, android.R.id.background)
+                setId(1, android.R.id.progress)
+            }
+            minHeight = dpToPx(3)
+            maxHeight = dpToPx(3)
+            thumb = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(Color.WHITE)
+                setSize(dpToPx(10), dpToPx(10))
+            }
+            splitTrack = false
             progressTintList = ColorStateList.valueOf(accent)
             thumbTintList = ColorStateList.valueOf(Color.WHITE)
             progressBackgroundTintList = ColorStateList.valueOf(Color.parseColor("#4DFFFFFF"))
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
+                dpToPx(28)
             )
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
@@ -592,23 +622,27 @@ class VideoPlayerActivity : Activity() {
         timeLeftContainer.addView(slashTv)
         timeLeftContainer.addView(totalTimeTv)
 
-        val pipPillBtn = LinearLayout(activity).apply {
+        val fullscreenButton = LinearLayout(activity).apply {
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dpToPx(36))
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dpToPx(12), dpToPx(6), dpToPx(12), dpToPx(6))
+            setPadding(dpToPx(10), dpToPx(6), dpToPx(10), dpToPx(6))
             background = GradientDrawable().apply {
                 setColor(Color.parseColor("#33FFFFFF"))
                 cornerRadius = dpToPx(8).toFloat()
             }
             addView(
-                bottomPipIconView,
+                fullscreenIconView,
                 LinearLayout.LayoutParams(dpToPx(18), dpToPx(18)).apply {
                     marginEnd = dpToPx(6)
                 }
             )
-            addView(bottomPipLabelTv)
+            addView(fullscreenLabelTv)
             setOnClickListener {
-                enterVideoPip(true)
+                val exitFullscreen = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+                manualOrientation = if (exitFullscreen) Configuration.ORIENTATION_PORTRAIT else Configuration.ORIENTATION_LANDSCAPE
+                requestedOrientation = if (exitFullscreen) android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+                    else android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
             }
         }
 
@@ -618,7 +652,7 @@ class VideoPlayerActivity : Activity() {
             gravity = Gravity.CENTER
             setTextColor(Color.WHITE)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-            layoutParams = LinearLayout.LayoutParams(dpToPx(92), dpToPx(44)).apply { marginEnd = dpToPx(6) }
+            layoutParams = LinearLayout.LayoutParams(dpToPx(82), dpToPx(36)).apply { marginEnd = dpToPx(6) }
             isEnabled = false
         }
         fun applyVideoSpeed(speed: Float): Boolean {
@@ -641,39 +675,39 @@ class VideoPlayerActivity : Activity() {
             text = "Uyku"
             gravity = Gravity.CENTER
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-            layoutParams = LinearLayout.LayoutParams(0, dpToPx(44), 1f).apply { marginEnd = dpToPx(6) }
+            layoutParams = LinearLayout.LayoutParams(dpToPx(84), dpToPx(36)).apply { marginEnd = dpToPx(6) }
         }
         fun styleChip(view: TextView, selected: Boolean) {
-            view.setTextColor(if (selected) onAccent else foreground)
+            view.setTextColor(Color.WHITE)
             view.background = GradientDrawable().apply {
-                setColor(if (selected) accent else surface)
-                cornerRadius = dpToPx(12).toFloat()
+                setColor(if (selected) (accent and 0x00FFFFFF) or 0x88000000.toInt() else Color.parseColor("#18FFFFFF"))
+                cornerRadius = dpToPx(9).toFloat()
                 setStroke(dpToPx(1), if (selected) accent else border)
             }
         }
         val panelContent = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dpToPx(12), dpToPx(8), dpToPx(12), dpToPx(12))
+            setPadding(dpToPx(10), dpToPx(4), dpToPx(10), dpToPx(8))
         }
         val panel = ScrollView(activity).apply {
             visibility = View.GONE
             background = GradientDrawable().apply {
                 setColor(surface)
-                cornerRadius = dpToPx(16).toFloat()
+                cornerRadius = dpToPx(12).toFloat()
                 setStroke(dpToPx(1), border)
             }
             addView(panelContent)
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dpToPx(210)).apply { topMargin = dpToPx(8) }
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dpToPx(152)).apply { topMargin = dpToPx(8) }
         }
         optionsPanel = panel
         var panelMode = "sound"
         fun heading(label: String) {
             panelContent.addView(TextView(activity).apply {
                 text = label
-                setTextColor(accent)
+                setTextColor(Color.parseColor("#DDE5E7EB"))
                 setTypeface(null, android.graphics.Typeface.BOLD)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-                setPadding(0, dpToPx(5), 0, dpToPx(7))
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                setPadding(0, dpToPx(4), 0, dpToPx(5))
             })
         }
         fun choices(labels: List<String>, selected: Int, select: (Int) -> Unit) {
@@ -684,7 +718,7 @@ class VideoPlayerActivity : Activity() {
                     gravity = Gravity.CENTER
                     setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
                     setTypeface(null, android.graphics.Typeface.BOLD)
-                    layoutParams = LinearLayout.LayoutParams(0, dpToPx(48), 1f).apply {
+                    layoutParams = LinearLayout.LayoutParams(0, dpToPx(36), 1f).apply {
                         if (index > 0) marginStart = dpToPx(5)
                     }
                     styleChip(this, selected == index)
@@ -744,7 +778,7 @@ class VideoPlayerActivity : Activity() {
         }
         optionsRow.addView(sleepButton)
         optionsRow.addView(speedButton)
-        optionsRow.addView(pipPillBtn)
+        optionsRow.addView(fullscreenButton)
         bottomBar.addView(seekBar)
         bottomBar.addView(bottomMetaRow)
         bottomBar.addView(optionsRow)
@@ -786,7 +820,15 @@ class VideoPlayerActivity : Activity() {
             val newH = (bottom - top).coerceAtLeast(0)
             uiHandler.post {
                 if (!isMini) applyImmersiveFullscreen(window)
-                val panelHeight = minOf(dpToPx(245), (newH * 0.45f).toInt())
+                val landscape = newW > newH
+                fullscreenIconView.updateIcon(if (landscape) "exit_fullscreen" else "fullscreen")
+                fullscreenLabelTv.text = if (landscape) "Tam ekrandan çık" else "Tam ekran"
+                val barWidth = minOf(newW, dpToPx(460))
+                if (bottomBar.layoutParams.width != barWidth) bottomBar.layoutParams = (bottomBar.layoutParams as FrameLayout.LayoutParams).apply {
+                    width = barWidth
+                    gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+                }
+                val panelHeight = minOf(dpToPx(152), (newH * 0.43f).toInt())
                 if (panel.layoutParams.height != panelHeight) panel.layoutParams = panel.layoutParams.apply { height = panelHeight }
                 updateVideoBounds(newW, newH)
             }
@@ -796,7 +838,7 @@ class VideoPlayerActivity : Activity() {
         val doubleTapFeedbackTv = TextView(activity).apply {
             text = "+10 sn"
             setTextColor(Color.WHITE)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
             typeface = Typeface.DEFAULT_BOLD
             setPadding(dpToPx(18), dpToPx(10), dpToPx(18), dpToPx(10))
             background = GradientDrawable().apply {

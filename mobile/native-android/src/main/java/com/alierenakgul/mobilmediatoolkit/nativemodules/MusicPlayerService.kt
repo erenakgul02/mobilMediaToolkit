@@ -16,6 +16,9 @@ import android.graphics.Color
 import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Shader
+import android.media.AudioManager
+import android.media.AudioFocusRequest
+import android.media.AudioRouting
 import android.media.AudioAttributes
 import android.media.MediaMetadata
 import android.media.MediaPlayer
@@ -135,9 +138,7 @@ class MusicPlayerService : Service() {
 
         fun pauseIfPlaying() {
             val svc = instance ?: return
-            if (isPlayingState) {
-                svc.handleAction(ACTION_PLAY_PAUSE)
-            }
+            svc.mainHandler.post { svc.pausePlayback() }
         }
 
         fun seekToPosition(posMs: Int) {
@@ -297,6 +298,120 @@ class MusicPlayerService : Service() {
     private var loudnessEnhancer: LoudnessEnhancer? = null
 
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val audioManager by lazy { getSystemService(Context.AUDIO_SERVICE) as AudioManager }
+    private val mediaAudioAttributes = AudioAttributes.Builder()
+        .setUsage(AudioAttributes.USAGE_MEDIA)
+        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build()
+    private var hasAudioFocus = false
+    private var resumeOnFocusGain = false
+    private var focusRegistered = false
+    private var playerPrepared = false
+    private var playWhenPrepared = false
+    private val focusListener = AudioManager.OnAudioFocusChangeListener { change ->
+        if (!focusRegistered) return@OnAudioFocusChangeListener
+        when (change) {
+            AudioManager.AUDIOFOCUS_GAIN -> {
+                if (focusRegistered) {
+                    hasAudioFocus = true
+                    mediaPlayer?.setVolume(1f, 1f)
+                    if (resumeOnFocusGain) {
+                        resumeOnFocusGain = false
+                        mediaPlayer?.let { startWithAudioFocus(it) }
+                        publishPlaybackState()
+                    }
+                }
+            }
+            AudioManager.AUDIOFOCUS_LOSS -> {
+                pausePlayback()
+            }
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
+                val shouldResume = isPlayingState || resumeOnFocusGain
+                pausePlayback(releaseFocus = false)
+                hasAudioFocus = false
+                resumeOnFocusGain = shouldResume
+            }
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> mediaPlayer?.setVolume(0.2f, 0.2f)
+        }
+    }
+    private val focusRequest by lazy {
+        AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+            .setAudioAttributes(mediaAudioAttributes)
+            .setOnAudioFocusChangeListener(focusListener, mainHandler).build()
+    }
+    private val noisyReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY) pausePlayback()
+        }
+    }
+    private val routingListener = AudioRouting.OnRoutingChangedListener { router ->
+        if (router === mediaPlayer && playerPrepared) {
+            Log.d(TAG, "Media output changed: ${router.routedDevice?.type}")
+            releaseAudioEffects()
+            if (audioPreset != "NORMAL") applyAudioPresetInternal()
+        }
+    }
+
+    private fun publishPlaybackState() {
+        updateMediaSessionPlaybackState()
+        playlist.getOrNull(currentIndex)?.let { startOrUpdateForegroundNotification(it) }
+        emitStateToRN()
+    }
+
+    @Suppress("DEPRECATION")
+    private fun startWithAudioFocus(player: MediaPlayer): Boolean {
+        if (!playerPrepared) return false
+        // Android 15+ requires a foreground service before background focus requests.
+        playlist.getOrNull(currentIndex)?.let { startOrUpdateForegroundNotification(it) }
+        val granted = hasAudioFocus || try {
+            focusRegistered = true
+            val result = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) audioManager.requestAudioFocus(focusRequest)
+                else audioManager.requestAudioFocus(focusListener, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN)
+            result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+        } catch (e: Exception) {
+            Log.w(TAG, "Audio focus request failed", e)
+            false
+        }
+        hasAudioFocus = granted
+        resumeOnFocusGain = false
+        if (!granted) {
+            isPlayingState = false
+            abandonAudioFocus()
+            publishPlaybackState()
+            android.widget.Toast.makeText(this, "Ses başka bir uygulamada kullanılıyor. Tekrar oynatmayı deneyin.", android.widget.Toast.LENGTH_SHORT).show()
+            return false
+        }
+        player.setVolume(1f, 1f)
+        player.start()
+        isPlayingState = true
+        return true
+    }
+
+    @Suppress("DEPRECATION")
+    private fun abandonAudioFocus() {
+        resumeOnFocusGain = false
+        hasAudioFocus = false
+        if (!focusRegistered) return
+        focusRegistered = false
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) audioManager.abandonAudioFocusRequest(focusRequest)
+        else audioManager.abandonAudioFocus(focusListener)
+    }
+
+    private fun pausePlayback(releaseFocus: Boolean = true) {
+        playWhenPrepared = false
+        resumeOnFocusGain = false
+        if (playerPrepared) runCatching {
+            mediaPlayer?.let { player ->
+                currentPositionMs = player.currentPosition
+                player.pause()
+                player.setVolume(1f, 1f)
+                saveCurrentTrackResumePosition()
+            }
+        }
+        isPlayingState = false
+        if (releaseFocus) abandonAudioFocus()
+        publishPlaybackState()
+    }
+
     private var currentVinylBitmap: Bitmap? = null
     private var resumeSaveCounter: Int = 0
 
@@ -335,6 +450,9 @@ class MusicPlayerService : Service() {
         instance = this
         createNotificationChannel()
         initMediaSession()
+        androidx.core.content.ContextCompat.registerReceiver(this, noisyReceiver,
+            android.content.IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY),
+            androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED)
         mainHandler.post(progressRunnable)
     }
 
@@ -354,6 +472,8 @@ class MusicPlayerService : Service() {
     override fun onDestroy() {
         saveCurrentTrackResumePosition()
         mainHandler.removeCallbacksAndMessages(null)
+        abandonAudioFocus()
+        runCatching { unregisterReceiver(noisyReceiver) }
         releaseMediaPlayer()
         try {
             mediaSession?.isActive = false
@@ -438,7 +558,7 @@ class MusicPlayerService : Service() {
                     params.speed = playbackSpeed
                     mp.playbackParams = params
                     if (!wasPlaying && isPlayingState) {
-                        mp.start()
+                        if (hasAudioFocus) mp.start()
                     } else if (!isPlayingState && mp.isPlaying) {
                         mp.pause()
                     }
@@ -453,6 +573,8 @@ class MusicPlayerService : Service() {
     fun applyAudioPresetInternal() {
         mainHandler.post {
             val mp = mediaPlayer ?: return@post
+            if (!playerPrepared) return@post
+            if (audioPreset == "NORMAL") { releaseAudioEffects(); return@post }
             val sessionId = mp.audioSessionId
             if (sessionId <= 0) return@post
 
@@ -467,7 +589,9 @@ class MusicPlayerService : Service() {
                     loudnessEnhancer = LoudnessEnhancer(sessionId)
                 }
             } catch (e: Exception) {
+                releaseAudioEffects()
                 Log.w(TAG, "Ses efekt motoru başlatma uyarısı: ${e.message}")
+                return@post
             }
 
             try {
@@ -514,6 +638,7 @@ class MusicPlayerService : Service() {
                     }
                 }
             } catch (e: Exception) {
+                releaseAudioEffects()
                 Log.w(TAG, "Ses profili uygulanamadı: ${e.message}")
             }
         }
@@ -557,7 +682,7 @@ class MusicPlayerService : Service() {
                 }
 
                 override fun onPause() {
-                    if (isPlayingState) togglePlayPause()
+                    pausePlayback()
                 }
 
                 override fun onSkipToNext() {
@@ -576,6 +701,7 @@ class MusicPlayerService : Service() {
                     stopPlayerAndService()
                 }
             })
+            setPlaybackToLocal(mediaAudioAttributes)
             isActive = true
         }
     }
@@ -646,19 +772,18 @@ class MusicPlayerService : Service() {
         }
 
         releaseMediaPlayer()
+        playWhenPrepared = true
         loadVinylArtworkForTrack(track)
 
         try {
             val mp = MediaPlayer().apply {
                 setWakeMode(applicationContext, PowerManager.PARTIAL_WAKE_LOCK)
-                setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                        .setUsage(AudioAttributes.USAGE_MEDIA)
-                        .build()
-                )
+                setAudioAttributes(mediaAudioAttributes)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) addOnRoutingChangedListener(routingListener, mainHandler)
                 setDataSource(file.absolutePath)
                 setOnPreparedListener { player ->
+                    if (player !== mediaPlayer) return@setOnPreparedListener
+                    playerPrepared = true
                     currentDurationMs = player.duration.coerceAtLeast(0)
                     val savedPos = getSavedResumePosition(track, currentDurationMs)
                     if (savedPos > 0) {
@@ -668,8 +793,10 @@ class MusicPlayerService : Service() {
                         currentPositionMs = 0
                     }
 
-                    player.start()
-                    isPlayingState = true
+                    updateMediaSessionMetadata(track, currentDurationMs.toLong(), currentVinylBitmap)
+                    if (!playWhenPrepared) { publishPlaybackState(); return@setOnPreparedListener }
+                    playWhenPrepared = false
+                    if (!startWithAudioFocus(player)) return@setOnPreparedListener
 
                     if (playbackSpeed != 1.0f) {
                         applyPlaybackSpeedInternal()
@@ -698,8 +825,7 @@ class MusicPlayerService : Service() {
                     if (repeatMode == "ONE") {
                         currentPositionMs = 0
                         player.seekTo(0)
-                        player.start()
-                        isPlayingState = true
+                        startWithAudioFocus(player)
                         updateMediaSessionPlaybackState()
                         startOrUpdateForegroundNotification(track)
                         emitStateToRN()
@@ -713,6 +839,7 @@ class MusicPlayerService : Service() {
                             skipToNext()
                         } else {
                             isPlayingState = false
+                            abandonAudioFocus()
                             currentPositionMs = 0
                             player.seekTo(0)
                             updateMediaSessionPlaybackState()
@@ -722,13 +849,13 @@ class MusicPlayerService : Service() {
                     } else if (repeatMode == "ALL") {
                         currentPositionMs = 0
                         player.seekTo(0)
-                        player.start()
-                        isPlayingState = true
+                        startWithAudioFocus(player)
                         updateMediaSessionPlaybackState()
                         startOrUpdateForegroundNotification(track)
                         emitStateToRN()
                     } else {
                         isPlayingState = false
+                        abandonAudioFocus()
                         currentPositionMs = 0
                         player.seekTo(0)
                         updateMediaSessionPlaybackState()
@@ -739,6 +866,7 @@ class MusicPlayerService : Service() {
                 setOnErrorListener { _, what, extra ->
                     Log.e(TAG, "MediaPlayer hatası: what=$what extra=$extra")
                     isPlayingState = false
+                    abandonAudioFocus()
                     emitStateToRN()
                     true
                 }
@@ -748,6 +876,7 @@ class MusicPlayerService : Service() {
             startOrUpdateForegroundNotification(track)
         } catch (e: Exception) {
             Log.e(TAG, "Şarkı başlatılamadı", e)
+            abandonAudioFocus()
             isPlayingState = false
             emitStateToRN()
         }
@@ -760,15 +889,13 @@ class MusicPlayerService : Service() {
             playCurrentTrack()
             return
         }
+        if (!playerPrepared) { playWhenPrepared = !playWhenPrepared; return }
         try {
             if (mp.isPlaying) {
-                currentPositionMs = mp.currentPosition
-                saveCurrentTrackResumePosition()
-                mp.pause()
-                isPlayingState = false
+                pausePlayback()
+                return
             } else {
-                mp.start()
-                isPlayingState = true
+                if (!startWithAudioFocus(mp)) return
                 if (playbackSpeed != 1.0f) {
                     applyPlaybackSpeedInternal()
                 }
@@ -835,6 +962,11 @@ class MusicPlayerService : Service() {
     }
 
     private fun releaseMediaPlayer() {
+        playerPrepared = false
+        playWhenPrepared = false
+        isPlayingState = false
+        abandonAudioFocus()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) mediaPlayer?.removeOnRoutingChangedListener(routingListener)
         releaseAudioEffects()
         try {
             mediaPlayer?.stop()
