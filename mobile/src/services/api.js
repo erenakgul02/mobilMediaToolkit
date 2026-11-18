@@ -386,55 +386,136 @@ export async function getLocalHistory() {
   return [];
 }
 
-export async function addLocalHistoryItem(item) {
-  try {
-    const existing = await getLocalHistory();
-    const filtered = existing.filter((i) => i.filename !== item.filename);
-    const updated = [item, ...filtered];
-    await AsyncStorage.setItem(LOCAL_HISTORY_KEY, JSON.stringify(updated));
-    return updated;
-  } catch (e) {
-    console.warn('Lokal geçmişe eklenemedi:', e);
-    throw e;
+let historyWrites = Promise.resolve();
+function withHistoryWrite(operation) {
+  const pending = historyWrites.catch(() => {}).then(operation);
+  historyWrites = pending.catch(() => {});
+  return pending;
+}
+
+async function readHistoryForUpdate() {
+  const raw = await AsyncStorage.getItem(LOCAL_HISTORY_KEY);
+  const history = raw ? JSON.parse(raw) : [];
+  if (!Array.isArray(history)) throw new Error('Arşiv kaydı okunamadı; mevcut kayıt değiştirilmedi.');
+  return history;
+}
+
+async function ensureSharedStoragePermission() {
+  if (Platform.OS !== 'android' || Platform.Version > 29 || !Platform.Version) return;
+  const permissions = Platform.Version <= 28
+    ? [PermissionsAndroid.PERMISSIONS.READ_EXTERNAL_STORAGE, PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE]
+    : [PermissionsAndroid.PERMISSIONS.READ_EXTERNAL_STORAGE];
+  const results = await PermissionsAndroid.requestMultiple(permissions);
+  if (permissions.some((permission) => results[permission] !== PermissionsAndroid.RESULTS.GRANTED)) {
+    throw new Error('Dosyaların ortak İndirilenler klasörüne kaydedilmesi için depolama izni gerekiyor.');
   }
+}
+
+function sameFileLocation(a, b) {
+  if (!a || !b) return false;
+  try { return decodeURI(a) === decodeURI(b); } catch { return a === b; }
+}
+
+export async function scanArchiveFolder(chooseFolder = false) {
+  if (Platform.OS !== 'android' || !YoutubeDLNative?.scanArchiveFolder) {
+    throw new Error('Klasör tarama için güncel Android APK gerekli.');
+  }
+  await ensureSharedStoragePermission();
+  const result = await YoutubeDLNative.scanArchiveFolder(chooseFolder);
+  if (result.cancelled) return { ...result, added: 0, updated: 0 };
+  return withHistoryWrite(async () => {
+    const history = await readHistoryForUpdate();
+    const merged = [...history];
+    const renamed = new Map();
+    let added = 0;
+    let updated = 0;
+    for (const candidate of result.items || []) {
+      const { originalDownloadUrl, originalFilename: _originalFilename, modifiedAt, ...item } = candidate;
+      if (!item.filename || !item.download_url) continue;
+      const originalIndex = originalDownloadUrl ? merged.findIndex((existing) => sameFileLocation(existing.download_url, originalDownloadUrl)) : -1;
+      const index = originalIndex >= 0 ? originalIndex : merged.findIndex((existing) =>
+        existing.filename === item.filename || sameFileLocation(existing.download_url, item.download_url));
+      if (index >= 0) {
+        const existing = merged[index];
+        if (existing.filename !== item.filename) renamed.set(existing.filename, item.filename);
+        if (existing.download_url !== item.download_url || existing.filesize !== item.filesize) updated++;
+        merged[index] = { ...item, ...existing, filename: item.filename, download_url: item.download_url, filesize: item.filesize };
+      } else {
+        merged.push({ ...item, createdAt: new Date(modifiedAt || Date.now()).toISOString(), date: 'Dosyadan eklendi' });
+        added++;
+      }
+    }
+    const unique = merged.filter((item, index) => merged.findIndex((other) => other.filename === item.filename) === index);
+    if (renamed.size) {
+      const rawPlaylists = await AsyncStorage.getItem(PLAYLISTS_STORAGE_KEY);
+      const playlists = rawPlaylists ? JSON.parse(rawPlaylists) : [];
+      if (!Array.isArray(playlists)) throw new Error('Çalma listeleri okunamadı; kayıtlar değiştirilmedi.');
+      const updatedPlaylists = playlists.map((playlist) => ({ ...playlist,
+        trackFilenames: [...new Set((playlist.trackFilenames || []).map((name) => renamed.get(name) || name))],
+      }));
+      await AsyncStorage.multiSet([
+        [LOCAL_HISTORY_KEY, JSON.stringify(unique)],
+        [PLAYLISTS_STORAGE_KEY, JSON.stringify(updatedPlaylists)],
+      ]);
+    } else await AsyncStorage.setItem(LOCAL_HISTORY_KEY, JSON.stringify(unique));
+    return { ...result, items: unique, added, updated };
+  });
+}
+
+export async function addLocalHistoryItem(item) {
+  return withHistoryWrite(async () => {
+    try {
+      const existing = await readHistoryForUpdate();
+      const filtered = existing.filter((i) => i.filename !== item.filename);
+      const updated = [item, ...filtered];
+      await AsyncStorage.setItem(LOCAL_HISTORY_KEY, JSON.stringify(updated));
+      return updated;
+    } catch (e) {
+      console.warn('Lokal geçmişe eklenemedi:', e);
+      throw e;
+    }
+  });
 }
 
 export async function deleteLocalHistoryItem(filename, fileUrlOrPath = '') {
-  try {
-    const existing = await getLocalHistory();
-    const targetItem = existing.find((i) => i.filename === filename);
-    const resolvedUrl = fileUrlOrPath || targetItem?.download_url || '';
-
-    // 1. Önce telefon hafızasından (Download/MediaToolkit) fiziksel olarak sil
-    if (Platform.OS === 'android' && YoutubeDLNative && YoutubeDLNative.deleteMediaFile) {
-      try {
-        await YoutubeDLNative.deleteMediaFile(resolvedUrl, filename || '');
-      } catch (delErr) {
-        console.warn('Fiziksel dosya silme uyarısı:', delErr);
-      }
-    }
-
-    // 2. Çalma listelerinde bu dosya varsa temizle
+  return withHistoryWrite(async () => {
     try {
-      const playlists = await getPlaylists();
-      const updatedPlaylists = playlists.map((pl) => ({
-        ...pl,
-        trackFilenames: (pl.trackFilenames || []).filter((f) => f !== filename),
-      }));
-      await savePlaylists(updatedPlaylists);
-    } catch (plErr) {
-      console.warn('Playlist temizleme uyarısı:', plErr);
-    }
+      const existing = await readHistoryForUpdate();
+      const targetItem = existing.find((i) => i.filename === filename);
+      const resolvedUrl = fileUrlOrPath || targetItem?.download_url || '';
 
-    // 3. Uygulama içi geçmiş listesinden kaldır
-    const updated = existing.filter((i) => i.filename !== filename);
-    await AsyncStorage.setItem(LOCAL_HISTORY_KEY, JSON.stringify(updated));
-    return updated;
-  } catch (e) {
-    console.warn('Lokal geçmişten silinemedi:', e);
-    return [];
-  }
+      // 1. Önce telefon hafızasından (Download/MediaToolkit) fiziksel olarak sil
+      if (Platform.OS === 'android' && YoutubeDLNative && YoutubeDLNative.deleteMediaFile) {
+        try {
+          await YoutubeDLNative.deleteMediaFile(resolvedUrl, filename || '');
+        } catch (delErr) {
+          console.warn('Fiziksel dosya silme uyarısı:', delErr);
+        }
+      }
+
+      // 2. Çalma listelerinde bu dosya varsa temizle
+      try {
+        const playlists = await getPlaylists();
+        const updatedPlaylists = playlists.map((pl) => ({
+          ...pl,
+          trackFilenames: (pl.trackFilenames || []).filter((f) => f !== filename),
+        }));
+        await savePlaylists(updatedPlaylists);
+      } catch (plErr) {
+        console.warn('Playlist temizleme uyarısı:', plErr);
+      }
+
+      // 3. Uygulama içi geçmiş listesinden kaldır
+      const updated = existing.filter((i) => i.filename !== filename);
+      await AsyncStorage.setItem(LOCAL_HISTORY_KEY, JSON.stringify(updated));
+      return updated;
+    } catch (e) {
+      console.warn('Lokal geçmişten silinemedi:', e);
+      return [];
+    }
+  });
 }
+
 
 export async function checkHealth() {
   return { status: 'online', native: true };
@@ -564,6 +645,7 @@ async function processDownloadQueue() {
       try {
         // Save before starting native work so process death cannot lose the job.
         await persistQueue();
+        await ensureSharedStoragePermission();
         const result = await YoutubeDLNative.downloadResumable(task.cleanUrl, task.type, task.quality, task.id);
         task.filename = result.fileName;
         task.download_url = `file://${result.filePath}`;
@@ -890,6 +972,7 @@ export async function fetchDeviceStorageStats() {
 
 export async function trimAudioClip({ item, startSec, endSec, setAsRingtone = false }) {
   if (Platform.OS === 'android' && YoutubeDLNative && YoutubeDLNative.trimAudioFile) {
+    await ensureSharedStoragePermission();
     const res = await YoutubeDLNative.trimAudioFile(
       item?.download_url || '',
       item?.filename || '',

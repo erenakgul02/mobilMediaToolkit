@@ -18,6 +18,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import {
   getLocalHistory,
+  scanArchiveFolder,
   deleteLocalHistoryItem,
   downloadFileToDevice,
   playAudioPlaylist,
@@ -84,6 +85,7 @@ export default function HistoryTab({
   const [menuItem, setMenuItem] = useState(null);
   const [playlists, setPlaylists] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [scanning, setScanning] = useState(false);
   const [actionLoading, setActionLoading] = useState(null);
 
   // Filtre ve Sıralama State'leri
@@ -112,6 +114,30 @@ export default function HistoryTab({
   const [trimStartSec, setTrimStartSec] = useState('30');
   const [trimEndSec, setTrimEndSec] = useState('60');
   const [trimLoading, setTrimLoading] = useState(false);
+
+  const handleScanFolder = async (chooseFolder = false) => {
+    setScanning(true);
+    try {
+      const result = await scanArchiveFolder(chooseFolder);
+      if (result.cancelled) return;
+      await loadHistoryAndPlaylists();
+      setSearchQuery('');
+      setSelectedArtist('ALL');
+      setSelectedPlaylistId('ALL');
+      setFilterType('all');
+      const message = `${result.added} dosya arşive eklendi. ${result.updated} kayıt güncellendi.` +
+        (result.migrated ? `\n${result.migrated} eski özel alan dosyası kalıcı İndirilenler klasörüne kopyalandı.` : '') +
+        (result.skipped ? `\n${result.skipped} dosya okunamadı veya kaydedilemedi.` : '');
+      Alert.alert('Tarama tamamlandı', message +
+        (!chooseFolder ? '\nEksik dosyalar varsa Download/MediaToolkit klasörünü seçerek içe aktarabilirsiniz. Erişim için gereken dosyalar ortak klasöre kopyalanır; asılları silinmez.' : ''),
+        !chooseFolder ? [
+          { text: 'Kapat', style: 'cancel' },
+          { text: 'Klasör seç', onPress: () => handleScanFolder(true) },
+        ] : [{ text: 'Tamam' }]);
+    } catch (error) {
+      Alert.alert('Tarama yapılamadı', error.message || 'Klasör okunamadı.');
+    } finally { setScanning(false); }
+  };
 
   const loadHistoryAndPlaylists = async () => {
     setLoading(true);
@@ -753,6 +779,11 @@ export default function HistoryTab({
         </View>
 
         <View style={styles.headerRightActions}>
+          <TouchableOpacity style={styles.sortToggleBtn} disabled={scanning} onPress={() => handleScanFolder()}
+            accessibilityRole="button" accessibilityLabel="Klasörü tara">
+            {scanning ? <ActivityIndicator size="small" color={theme.accent} /> : <Ionicons name="folder-open-outline" size={14} color={theme.accent} />}
+            <Text style={{ color: theme.accent, fontSize: 11 }}> {scanning ? 'Taranıyor' : 'Klasörü tara'}</Text>
+          </TouchableOpacity>
           {items.length > 0 && (
             <TouchableOpacity
               style={[
@@ -1796,10 +1827,11 @@ const createStyles = (theme) => StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 8,
-    flexWrap: 'nowrap',
+    flexWrap: 'wrap',
     gap: 6,
   },
   headerLeftRow: {
+    minWidth: 110,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,

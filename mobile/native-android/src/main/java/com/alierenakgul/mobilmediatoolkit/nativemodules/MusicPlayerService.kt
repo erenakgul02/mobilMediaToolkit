@@ -400,7 +400,7 @@ class MusicPlayerService : Service() {
             val prefs = getSharedPreferences(RESUME_PREFS_NAME, Context.MODE_PRIVATE)
             if (currentPositionMs > 5000 && currentDurationMs > 0 && currentPositionMs < currentDurationMs - 5000) {
                 prefs.edit().putInt(key, currentPositionMs).apply()
-            } else if (currentDurationMs > 0 && currentPositionMs >= currentDurationMs - 5000) {
+            } else if (currentDurationMs > 0) {
                 prefs.edit().remove(key).apply()
             }
         } catch (_: Exception) {}

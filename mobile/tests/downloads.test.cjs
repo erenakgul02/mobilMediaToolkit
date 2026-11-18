@@ -40,6 +40,7 @@ function setup({ store = new Map(), native = {}, setItem } = {}) {
     'react-native': { Platform: { OS: 'android' }, NativeModules: { YoutubeDLNative: bridge }, DeviceEventEmitter: { addListener() {} }, PermissionsAndroid: {} },
     '@react-native-async-storage/async-storage': {
       getItem: async (key) => store.get(key) || null,
+      multiSet: async (entries) => { for (const [key, value] of entries) store.set(key, value); },
       setItem: setItem || (async (key, value) => { store.set(key, value); }),
     },
     'expo-file-system/legacy': {}, 'expo-sharing': {},
@@ -176,4 +177,61 @@ test('display and execution keep FIFO order, including restored older snapshots'
   const restored = setup({ store });
   await restored.api.initializeDownloadQueue();
   assert.equal(restored.api.getDownloadQueueState().tasks[0].id, 'native_1_ab');
+});
+
+test('archive scan adds missing files once and preserves existing metadata', async () => {
+  const old = { id: 'old', filename: 'song.m4a', title: 'Benim başlığım', videoId: 'abcdefghijk', thumbnail: 'cover', download_url: 'file:///old/song.m4a' };
+  const store = new Map([[historyKey, JSON.stringify([old])]]);
+  const discovered = [
+    { filename: 'song.m4a', title: 'Dosya başlığı', download_url: 'file:///Download/MediaToolkit/song.m4a', filesize: '3 MB' },
+    { filename: 'video.mp4', title: 'Video', type: 'mp4', download_url: 'file:///Download/MediaToolkit/video.mp4', modifiedAt: 1700000000000 },
+  ];
+  const { api } = setup({ store, native: { scanArchiveFolder: async () => ({ items: discovered, cancelled: false }) } });
+  const first = await api.scanArchiveFolder();
+  assert.equal(first.added, 1);
+  assert.equal(first.updated, 1);
+  assert.equal((await api.scanArchiveFolder()).added, 0);
+  const saved = JSON.parse(store.get(historyKey));
+  assert.equal(saved.length, 2);
+  assert.equal(saved[0].title, old.title);
+  assert.equal(saved[0].videoId, old.videoId);
+  assert.equal(saved[0].thumbnail, old.thumbnail);
+  assert.equal(saved[0].download_url, discovered[0].download_url);
+});
+
+test('cancelled folder selection and corrupt history do not erase saved records', async () => {
+  const store = new Map([[historyKey, 'unreadable history']]);
+  const cancelled = setup({ store, native: { scanArchiveFolder: async () => ({ cancelled: true }) } });
+  assert.equal((await cancelled.api.scanArchiveFolder(true)).cancelled, true);
+  assert.equal(store.get(historyKey), 'unreadable history');
+  const scan = setup({ store, native: { scanArchiveFolder: async () => ({ items: [], cancelled: false }) } });
+  await assert.rejects(scan.api.scanArchiveFolder());
+  assert.equal(store.get(historyKey), 'unreadable history');
+});
+
+test('archive scan and concurrent new downloads retain both history entries', async () => {
+  let finishScan;
+  const { api, store } = setup({ native: { scanArchiveFolder: () => new Promise(resolve => { finishScan = resolve; }) } });
+  const scanning = api.scanArchiveFolder();
+  await until(() => !!finishScan);
+  const adding = api.addLocalHistoryItem({ filename: 'new.m4a', title: 'Yeni indirme' });
+  finishScan({ items: [{ filename: 'old.m4a', download_url: 'file:///Download/MediaToolkit/old.m4a' }] });
+  await Promise.all([scanning, adding]);
+  assert.deepEqual(JSON.parse(store.get(historyKey)).map(item => item.filename).sort(), ['new.m4a', 'old.m4a']);
+});
+
+test('moving a legacy private file preserves playlist membership after a name collision', async () => {
+  const playlistsKey = '@mobil_media_toolkit_playlists';
+  const store = new Map([
+    [historyKey, JSON.stringify([{ id: 'original', filename: 'song.m4a', title: 'Başlığım', download_url: 'file:///private/my song.m4a' }])],
+    [playlistsKey, JSON.stringify([{ id: 'fav', name: 'Favoriler', trackFilenames: ['song.m4a'] }])],
+  ]);
+  const { api } = setup({ store, native: { scanArchiveFolder: async () => ({ items: [{ filename: 'song (1).m4a',
+    originalDownloadUrl: 'file:///private/my%20song.m4a', download_url: 'file:///Download/MediaToolkit/song%20(1).m4a' }] }) } });
+  await api.scanArchiveFolder();
+  const saved = JSON.parse(store.get(historyKey));
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0].filename, 'song (1).m4a');
+  assert.equal(saved[0].title, 'Başlığım');
+  assert.deepEqual(JSON.parse(store.get(playlistsKey))[0].trackFilenames, ['song (1).m4a']);
 });

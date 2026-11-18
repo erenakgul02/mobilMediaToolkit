@@ -3,7 +3,7 @@
     "name": "Media Toolkit",
     "slug": "mobil-media-toolkit",
     "version": "1.0.0",
-    "orientation": "portrait",
+    "orientation": "default",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "splash": {
@@ -36,11 +36,12 @@
       "themeColor": "#FFFFFF",
       "backgroundColor": "#FFFFFF",
       "display": "standalone",
-      "orientation": "portrait"
+      "orientation": "any"
     },
     "plugins": [
       "expo-sharing",
-      "./plugins/withShareReceiver"
+      "./plugins/withShareReceiver",
+      "./plugins/withVideoPip"
     ]
   }
 }

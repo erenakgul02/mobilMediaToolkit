@@ -6,6 +6,7 @@ import {
   AppState,
   Alert,
   StyleSheet,
+  ScrollView,
   View,
   Text,
   TouchableOpacity,
@@ -462,12 +463,13 @@ function MediaToolkitApp() {
       {/* BÜYÜK TAM EKRAN MÜZİK ÇALAR MODALI (Mini Player'a Dokununca Açılır) */}
       <Modal
         visible={expandedPlayerVisible && playerState.isActive}
+        supportedOrientations={['portrait', 'landscape-left', 'landscape-right']}
         animationType="slide"
         transparent={true}
         onRequestClose={() => setExpandedPlayerVisible(false)}
       >
         <View style={styles.modalBackdrop}>
-          <View style={[styles.expandedPlayerSheet, { paddingTop: insets.top + 8, paddingBottom: insets.bottom + 12 }]}>
+          <ScrollView style={{ flex: 1 }} contentContainerStyle={[styles.expandedPlayerSheet, { flexGrow: 1, paddingTop: insets.top + 8, paddingBottom: insets.bottom + 12, paddingLeft: insets.left + 24, paddingRight: insets.right + 24 }]} showsVerticalScrollIndicator={false}>
             {/* Üst Bar: Küçült + Başlık + Paylaş */}
             <View style={styles.expandedTopBar}>
               <TouchableOpacity
@@ -885,7 +887,7 @@ function MediaToolkitApp() {
                 <Text style={styles.skipSecText}>+10s</Text>
               </TouchableOpacity>
             </View>
-          </View>
+          </ScrollView>
         </View>
       </Modal>
     </SafeAreaView>
@@ -1166,7 +1168,6 @@ const createStyles = (theme) => StyleSheet.create({
     justifyContent: 'flex-end',
   },
   expandedPlayerSheet: {
-    flex: 1,
     backgroundColor: theme.background,
     paddingTop: 12,
     paddingBottom: Platform.OS === 'android' ? 54 : 36,
