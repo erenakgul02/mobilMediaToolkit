@@ -111,13 +111,13 @@ class VideoPlayerActivity : Activity() {
             if (!pipSupported()) Toast.makeText(this, "Bu cihaz küçük video penceresini desteklemiyor.", Toast.LENGTH_LONG).show()
             else android.app.AlertDialog.Builder(this)
                 .setTitle("Küçük pencere izni")
-                .setMessage("Videonun başka uygulamaların üzerinde görünmesi için Media Toolkit'in resim içinde resim iznini açın.")
+                .setMessage("Videonun başka uygulamaların üzerinde görünmesi için Uygulama bilgileri ekranından Media Toolkit'in resim içinde resim iznini açın.")
                 .setNegativeButton("Vazgeç", null)
                 .setPositiveButton("Ayarlara git") { _, _ ->
                     switchingToPipSettings = true
                     lastPipState = ""
                     updatePipParams()
-                    runCatching { startActivity(Intent(android.provider.Settings.ACTION_PICTURE_IN_PICTURE_SETTINGS,
+                    runCatching { startActivity(Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
                         android.net.Uri.parse("package:$packageName"))) }
                 }.show()
         }
