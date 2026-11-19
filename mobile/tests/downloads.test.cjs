@@ -248,3 +248,24 @@ test('video bridge receives the saved theme and media identity', async () => {
   assert.deepEqual(received[0], [item.download_url, item.filename, item.title, item.uploader, true]);
   assert.deepEqual(received[1], [item.download_url, item.filename, item.title, item.uploader, false]);
 });
+
+
+test('archive scan repairs published pending paths without duplicating songs or losing playlists', async () => {
+  const oldName = '.pending-1795713085-Song_720p.mp4';
+  const playlistKey = '@mobil_media_toolkit_playlists';
+  const store = new Map([
+    [historyKey, JSON.stringify([{ id: 'keep-id', filename: oldName, title: 'Keep title', download_url: `file:///Download/MediaToolkit/${oldName}` }])],
+    [playlistKey, JSON.stringify([{ id: 'favorites', trackFilenames: [oldName] }])],
+  ]);
+  const item = { filename: 'Song_720p.mp4', download_url: 'file:///Download/MediaToolkit/Song_720p.mp4', filesize: '5 MB' };
+  const { api } = setup({ store, native: { scanArchiveFolder: async () => ({ items: [item] }) } });
+  const result = await api.scanArchiveFolder();
+  assert.equal(result.added, 0);
+  const history = JSON.parse(store.get(historyKey));
+  assert.equal(history.length, 1);
+  assert.equal(history[0].id, 'keep-id');
+  assert.equal(history[0].title, 'Keep title');
+  assert.equal(history[0].download_url, item.download_url);
+  assert.deepEqual(JSON.parse(store.get(playlistKey))[0].trackFilenames, [item.filename]);
+  assert.equal((await api.scanArchiveFolder()).added, 0);
+});

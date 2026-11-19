@@ -30,3 +30,8 @@ export function downloadKey(url, type, quality) {
   const id = youtubeVideoId(url);
   return id ? `${id}:${type === 'mp4' ? 'mp4' : 'm4a'}:${quality}` : '';
 }
+
+// MediaStore replaces this temporary filename when a download is published.
+export function publishedMediaName(name) {
+  return String(name || '').replace(/^\.pending-\d+-(.+)$/, '$1');
+}

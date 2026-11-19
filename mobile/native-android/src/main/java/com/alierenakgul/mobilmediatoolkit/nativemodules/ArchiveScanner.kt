@@ -112,7 +112,7 @@ class ArchiveScanner(private val context: ReactApplicationContext) : BaseActivit
                 val publicRoot = SharedMediaStorage.directory().canonicalPath
                 val previouslyShared = runCatching { SharedMediaStorage.directory().listFiles() }.getOrNull().orEmpty().map { it.absolutePath }.toSet()
                 fun addFile(source: File) {
-                    if (source.extension.lowercase() !in extensions) return
+                    if (source.name.startsWith(".") || source.extension.lowercase() !in extensions) return
                     if (!source.isFile || !source.canRead() || source.length() == 0L) { skipped++; return }
                     try {
                         val originalUrl = Uri.fromFile(source).toString()

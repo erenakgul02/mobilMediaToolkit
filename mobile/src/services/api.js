@@ -1,4 +1,4 @@
-import { youtubeVideoId, downloadKey } from './downloadIdentity';
+import { youtubeVideoId, downloadKey, publishedMediaName } from './downloadIdentity';
 import { Platform, NativeModules, DeviceEventEmitter, PermissionsAndroid } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system/legacy';
@@ -434,7 +434,7 @@ export async function scanArchiveFolder(chooseFolder = false) {
       if (!item.filename || !item.download_url) continue;
       const originalIndex = originalDownloadUrl ? merged.findIndex((existing) => sameFileLocation(existing.download_url, originalDownloadUrl)) : -1;
       const index = originalIndex >= 0 ? originalIndex : merged.findIndex((existing) =>
-        existing.filename === item.filename || sameFileLocation(existing.download_url, item.download_url));
+        publishedMediaName(existing.filename) === item.filename || sameFileLocation(existing.download_url, item.download_url));
       if (index >= 0) {
         const existing = merged[index];
         if (existing.filename !== item.filename) renamed.set(existing.filename, item.filename);

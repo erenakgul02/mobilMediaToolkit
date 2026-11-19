@@ -46,7 +46,7 @@ object SharedMediaStorage {
         if (reuseContent) {
             val sourceHash by lazy { digest(source) }
             for (existing in runCatching { directory().listFiles() }.getOrNull().orEmpty()) {
-                if (existing.isFile && existing.canRead() && existing.length() == source.length() &&
+                if (!existing.name.startsWith(".") && existing.isFile && existing.canRead() && existing.length() == source.length() &&
                     runCatching { digest(existing).contentEquals(sourceHash) }.getOrDefault(false)) return existing
             }
         }
@@ -63,14 +63,14 @@ object SharedMediaStorage {
             try {
                 resolver.openOutputStream(uri, "w")?.use { output -> source.inputStream().use { it.copyTo(output) } }
                     ?: throw IOException("Ortak indirme klasörüne yazılamadı")
-                val path = resolver.query(uri, arrayOf(MediaStore.MediaColumns.DATA), null, null, null)?.use {
-                    if (it.moveToFirst()) it.getString(0) else null
-                } ?: throw IOException("Kaydedilen dosyanın yolu alınamadı")
-                val saved = File(path)
-                if (!saved.canRead() || saved.length() != source.length()) throw IOException("Dosya kaydı doğrulanamadı")
-                if (resolver.update(uri, ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }, null, null) != 1)
-                    throw IOException("Dosya ortak depolamada yayımlanamadı")
-                return saved
+                // MediaStore may rename the file while publishing it.
+                return MediaFileIdentity.finishPublication(source.length(), publish = {
+                    resolver.update(uri, ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }, null, null) == 1
+                }, readPath = {
+                    resolver.query(uri, arrayOf(MediaStore.MediaColumns.DATA), null, null, null)?.use {
+                        if (it.moveToFirst()) it.getString(0) else null
+                    }
+                })
             } catch (error: Exception) {
                 runCatching { resolver.delete(uri, null, null) }
                 throw error

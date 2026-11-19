@@ -306,7 +306,7 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
 
     private fun isSafeMediaFile(candidate: File): Boolean {
         return try {
-            if (!candidate.exists() || !candidate.isFile) return false
+            if (candidate.name.startsWith(".pending-") || !candidate.exists() || !candidate.isFile) return false
             val ext = candidate.extension.lowercase()
             if (ext !in ALLOWED_MEDIA_EXTENSIONS) return false
             val canonical = candidate.canonicalPath
@@ -341,22 +341,25 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
     }
 
     private fun resolveExistingFile(filePathOrUrl: String?, filename: String?): File? {
+        val names = linkedSetOf<String>()
         if (!filePathOrUrl.isNullOrBlank()) {
-            val clean = filePathOrUrl.removePrefix("file://").trim()
-            val direct = File(clean)
-            if (isSafeMediaFile(direct)) return direct
+            val paths = linkedSetOf(filePathOrUrl.removePrefix("file://").trim())
+            if (filePathOrUrl.startsWith("file://")) Uri.parse(filePathOrUrl).path?.let { paths.add(it) }
+            for (clean in paths.filter { it.isNotBlank() }) {
+                val direct = File(clean)
+                if (isSafeMediaFile(direct)) return direct
+                val publishedName = MediaFileIdentity.publishedName(direct.name)
+                val published = File(direct.parentFile, publishedName)
+                if (publishedName != direct.name && isSafeMediaFile(published)) return published
+                names.add(publishedName)
+            }
         }
-        if (!filename.isNullOrBlank()) {
-            // Path traversal (../) saldırılarını önlemek için yalnızca saf dosya adını al
-            val safeName = File(filename.trim()).name
-            if (safeName.isNotEmpty() && safeName != "." && safeName != "..") {
-                val inStorage = File(getStorageDir(), safeName)
-                if (isSafeMediaFile(inStorage)) return inStorage
-                val inPublicDownloads = File(
-                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
-                    "MediaToolkit/$safeName"
-                )
-                if (isSafeMediaFile(inPublicDownloads)) return inPublicDownloads
+        if (!filename.isNullOrBlank()) names.add(MediaFileIdentity.publishedName(File(filename.trim()).name))
+        for (name in names) {
+            if (name.isBlank() || name == "." || name == ".." || File(name).name != name) continue
+            for (root in getAllowedMediaRoots()) {
+                val candidate = File(root, name)
+                if (isSafeMediaFile(candidate)) return candidate
             }
         }
         return null
@@ -563,11 +566,14 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
         try {
             MusicPlayerService.reactContextRef = reactContext
             val list = mutableListOf<PlaylistTrack>()
+            val sourceIndices = mutableListOf<Int>()
+            require(startIndex in 0 until tracksArray.size()) { "Geçersiz şarkı seçimi." }
             for (i in 0 until tracksArray.size()) {
                 val map = tracksArray.getMap(i) ?: continue
                 val rawUrl = map.getString("download_url") ?: map.getString("filePath") ?: ""
                 val fname = map.getString("filename") ?: ""
                 val resolvedFile = resolveExistingFile(rawUrl, fname) ?: continue
+                sourceIndices.add(i)
 
                 list.add(
                     PlaylistTrack(
@@ -586,9 +592,16 @@ class YoutubeDLModule(private val reactContext: ReactApplicationContext) :
                 return
             }
 
-            reactContext.runOnUiQueueThread { VideoPlayerActivity.closeActive() }
-            MusicPlayerService.startPlayback(reactContext, list, startIndex)
-            promise.resolve(true)
+            val resolvedIndex = MediaFileIdentity.selectedIndex(sourceIndices, startIndex)
+            reactContext.runOnUiQueueThread {
+                try {
+                    VideoPlayerActivity.closeActive()
+                    MusicPlayerService.startPlayback(reactContext, list, resolvedIndex)
+                    promise.resolve(true)
+                } catch (e: Exception) {
+                    promise.reject("PLAYER_ERROR", e.localizedMessage ?: "Müzik çalar başlatılamadı", e)
+                }
+            }
         } catch (e: Exception) {
             Log.e(TAG, "playPlaylist hatası", e)
             promise.reject("PLAYER_ERROR", e.localizedMessage ?: "Müzik çalar başlatılamadı", e)
