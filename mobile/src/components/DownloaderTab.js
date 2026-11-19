@@ -12,6 +12,7 @@ import {
   Alert,
   Keyboard,
   Modal,
+  BackHandler,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
@@ -38,6 +39,7 @@ import {
 
 export default function DownloaderTab({
   initialUrl = '',
+  isActive = true,
   isDarkMode,
   playerState,
   onOpenExpandedPlayer,
@@ -48,6 +50,7 @@ export default function DownloaderTab({
   const [queryOrUrl, setQueryOrUrl] = useState(initialUrl);
   const [activePane, setActivePane] = useState('results');
   const panelScrollRef = useRef(null);
+  const searchGeneration = useRef(0);
   const [duplicateRequest, setDuplicateRequest] = useState(null);
   const [loadingInfo, setLoadingInfo] = useState(false);
   const [quickLinkDownloading, setQuickLinkDownloading] = useState(false);
@@ -103,6 +106,27 @@ export default function DownloaderTab({
       if (pollTimerRef.current) clearInterval(pollTimerRef.current);
     };
   }, []);
+
+  useEffect(() => {
+    if (!isActive) return;
+    const listener = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (presetMenuOpen) { setPresetMenuOpen(false); return true; }
+      if (videoInfo && searchResults.length) { setVideoInfo(null); return true; }
+      if (videoInfo || playlistInfo || searchResults.length || queryOrUrl || loadingInfo) {
+        searchGeneration.current++;
+        setLoadingInfo(false);
+        setVideoInfo(null);
+        setPlaylistInfo(null);
+        setSearchResults([]);
+        setQueryOrUrl('');
+        setSelectedVideoUrl('');
+        setErrorMsg('');
+        return true;
+      }
+      return false;
+    });
+    return () => listener.remove();
+  }, [isActive, presetMenuOpen, videoInfo, playlistInfo, searchResults.length, queryOrUrl, loadingInfo]);
 
   const handleSelectPreset = async (preset) => {
     setActivePreset(preset);
@@ -178,6 +202,7 @@ export default function DownloaderTab({
       return;
     }
 
+    const generation = ++searchGeneration.current;
     Keyboard.dismiss();
     setErrorMsg('');
     setLoadingInfo(true);
@@ -190,22 +215,25 @@ export default function DownloaderTab({
       if (isYouTubePlaylistUrl(input)) {
         setSearchResults([]);
         const plData = await fetchYouTubePlaylistInfo(input);
+        if (generation !== searchGeneration.current) return;
         setPlaylistInfo(plData);
       } else if (isLikelyYouTubeUrl(input)) {
         setSearchResults([]);
         const info = await fetchVideoInfo(input);
+        if (generation !== searchGeneration.current) return;
         setVideoInfo({ ...info, url: input });
         setSelectedVideoUrl(input);
         setMediaType(activePreset.type);
         setSelectedQuality(activePreset.quality);
       } else {
         const results = await searchYouTubeVideos(input);
+        if (generation !== searchGeneration.current) return;
         setSearchResults(results);
       }
     } catch (err) {
-      setErrorMsg(err.message || 'Arama veya video analizi başarısız oldu.');
+      if (generation === searchGeneration.current) setErrorMsg(err.message || 'Arama veya video analizi başarısız oldu.');
     } finally {
-      setLoadingInfo(false);
+      if (generation === searchGeneration.current) setLoadingInfo(false);
     }
   };
 
@@ -439,6 +467,9 @@ export default function DownloaderTab({
           {queryOrUrl.length > 0 && (
             <TouchableOpacity
               onPress={() => {
+                searchGeneration.current++;
+                setLoadingInfo(false);
+                setSelectedVideoUrl('');
                 setQueryOrUrl('');
                 setSearchResults([]);
                 setVideoInfo(null);
@@ -515,21 +546,7 @@ export default function DownloaderTab({
       </View>
 
       </View>
-      <View style={styles.paneTabs}>
-        {[
-          { id: 'results', label: 'Arama sonuçları' },
-          { id: 'downloads', label: `Anlık indirmeler (${queueState.tasks.filter((task) => task.status !== 'completed').length})` },
-        ].map((pane) => (
-          <TouchableOpacity key={pane.id} accessibilityRole="tab" accessibilityState={{ selected: activePane === pane.id }}
-            style={[styles.paneTab, activePane === pane.id && styles.paneTabSelected]}
-            onPress={() => { setActivePane(pane.id); panelScrollRef.current?.scrollTo({ y: 0, animated: false }); }}>
-            <Text style={[styles.paneLabel, activePane === pane.id && { color: theme.accent }]}>{pane.label}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-      <ScrollView ref={panelScrollRef} style={{ flex: 1 }} contentContainerStyle={styles.contentContainer}
-        keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" showsVerticalScrollIndicator={false}>
-      {activePane === 'results' && <>
+      <View style={{ paddingHorizontal: 12 }}>
       {/* ÜST AÇILIR/KAPANIR OTOMATİK İNDİRME FORMATI SEÇİCİSİ & WI-FI KİLİDİ */}
       <View style={[styles.presetCard, isDarkMode && styles.cardDark]}>
         <View style={styles.presetHeaderRow}>
@@ -589,7 +606,11 @@ export default function DownloaderTab({
           </View>
         </View>
 
-        {presetMenuOpen && (
+        {isActive && presetMenuOpen && (
+          <Modal transparent animationType="fade" onRequestClose={() => setPresetMenuOpen(false)}>
+            <View style={{ flex: 1, justifyContent: 'center', padding: 20, backgroundColor: '#0008' }}>
+              <TouchableOpacity accessibilityLabel="Seçenekleri kapat" style={StyleSheet.absoluteFill} onPress={() => setPresetMenuOpen(false)} />
+              <ScrollView style={{ maxHeight: '80%' }} keyboardShouldPersistTaps="handled">
           <View
             style={[
               styles.presetDropdownList,
@@ -677,10 +698,29 @@ export default function DownloaderTab({
               );
             })}
           </View>
+              </ScrollView>
+            </View>
+          </Modal>
         )}
       </View>
 
 
+      </View>
+      <View style={styles.paneTabs}>
+        {[
+          { id: 'results', label: 'Arama sonuçları' },
+          { id: 'downloads', label: `Anlık indirmeler (${queueState.tasks.filter((task) => task.status !== 'completed').length})` },
+        ].map((pane) => (
+          <TouchableOpacity key={pane.id} accessibilityRole="tab" accessibilityState={{ selected: activePane === pane.id }}
+            style={[styles.paneTab, activePane === pane.id && styles.paneTabSelected]}
+            onPress={() => { setActivePane(pane.id); panelScrollRef.current?.scrollTo({ y: 0, animated: false }); }}>
+            <Text style={[styles.paneLabel, activePane === pane.id && { color: theme.accent }]}>{pane.label}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+      <ScrollView ref={panelScrollRef} style={{ flex: 1 }} contentContainerStyle={styles.contentContainer}
+        keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" showsVerticalScrollIndicator={false}>
+      {activePane === 'results' && <>
       {/* Toplu YouTube Playlist / Albüm İndirme Kartı */}
       {playlistInfo && (
         <View style={[styles.card, isDarkMode && styles.cardDark]}>
@@ -1490,7 +1530,7 @@ export default function DownloaderTab({
         </View>
       )}
       </ScrollView>
-      <Modal visible={Boolean(duplicateRequest)} transparent animationType="fade" onRequestClose={() => setDuplicateRequest(null)}>
+      <Modal visible={isActive && Boolean(duplicateRequest)} transparent animationType="fade" onRequestClose={() => setDuplicateRequest(null)}>
         <View style={{ flex: 1, justifyContent: 'center', padding: 24, backgroundColor: theme.overlay }}>
           <View style={{ backgroundColor: theme.raised, padding: 20, borderRadius: 20, gap: 14 }}>
             <Text style={{ color: theme.text, fontSize: 20, fontWeight: '700' }}>Daha önce indirdin</Text>

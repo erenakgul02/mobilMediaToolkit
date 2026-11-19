@@ -46,7 +46,6 @@ class VideoPlayerActivity : Activity() {
     private var autoPipConfigured = false
     private var backCallback: android.window.OnBackInvokedCallback? = null
     private var switchingToPipSettings = false
-    private var rotationListener: OrientationEventListener? = null
     private var manualOrientation = Configuration.ORIENTATION_UNDEFINED
     private val pipAction = "com.alierenakgul.mobilmediatoolkit.VIDEO_PIP_TOGGLE"
     private val pipReceiver = object : android.content.BroadcastReceiver() {
@@ -225,7 +224,6 @@ class VideoPlayerActivity : Activity() {
     override fun onDestroy() {
         onPlayerClose?.invoke()
         audioEffects.release()
-        rotationListener?.disable()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) backCallback?.let { onBackInvokedDispatcher.unregisterOnBackInvokedCallback(it) }
         runCatching { unregisterReceiver(pipReceiver) }
         playingVideo = null
@@ -240,19 +238,6 @@ class VideoPlayerActivity : Activity() {
         val accent = Color.parseColor(if (dark) "#FF9B45" else "#176B46")
         val surface = Color.parseColor("#99202528")
         val border = Color.parseColor("#30FFFFFF")
-        val originalOrientation = requestedOrientation
-        rotationListener = object : OrientationEventListener(this) {
-            override fun onOrientationChanged(angle: Int) {
-                if (angle == ORIENTATION_UNKNOWN || manualOrientation == Configuration.ORIENTATION_UNDEFINED) return
-                val upright = angle < 20 || angle > 340
-                val sideways = angle in 70..110 || angle in 250..290
-                if ((manualOrientation == Configuration.ORIENTATION_PORTRAIT && upright) ||
-                    (manualOrientation == Configuration.ORIENTATION_LANDSCAPE && sideways)) {
-                    manualOrientation = Configuration.ORIENTATION_UNDEFINED
-                    requestedOrientation = originalOrientation
-                }
-            }
-        }.also { if (it.canDetectOrientation()) it.enable() }
         var audioPreset = "NORMAL"
         var isMini = false
         var completed = false
@@ -353,13 +338,6 @@ class VideoPlayerActivity : Activity() {
 
         val topPipIconView = PlayerVectorIconView(activity, "pip")
         val fullscreenIconView = PlayerVectorIconView(activity, "fullscreen")
-        val fullscreenLabelTv = TextView(activity).apply {
-            text = "Tam ekran"
-            setTextColor(Color.WHITE)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
-            typeface = Typeface.DEFAULT_BOLD
-        }
-
         // 1. ÜST SİNEMA GRADYAN BARI (Geri İkonu + Başlık + Küçük Pencere İkonu)
         val topBar = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -637,17 +615,18 @@ class VideoPlayerActivity : Activity() {
                     marginEnd = dpToPx(6)
                 }
             )
-            addView(fullscreenLabelTv)
+            contentDescription = "Tam ekran"
             setOnClickListener {
-                val exitFullscreen = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+                val currentOrientation = if (manualOrientation == Configuration.ORIENTATION_UNDEFINED) resources.configuration.orientation else manualOrientation
+                val exitFullscreen = currentOrientation == Configuration.ORIENTATION_LANDSCAPE
                 manualOrientation = if (exitFullscreen) Configuration.ORIENTATION_PORTRAIT else Configuration.ORIENTATION_LANDSCAPE
-                requestedOrientation = if (exitFullscreen) android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
-                    else android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                requestedOrientation = if (exitFullscreen) android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                    else android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
             }
         }
 
         val speedButton = TextView(activity).apply {
-            text = "1× · EQ"
+            text = "Ses ve hız"
             contentDescription = "Çalma hızı ve ses ayarları"
             gravity = Gravity.CENTER
             setTextColor(Color.WHITE)
@@ -663,7 +642,7 @@ class VideoPlayerActivity : Activity() {
                 player.playbackParams = android.media.PlaybackParams().setSpeed(speed).setPitch(1f)
                 if (!wasPlaying) videoView.pause()
                 videoSpeed = speed
-                speedButton.text = "${speed}× · EQ"
+                speedButton.contentDescription = "Ses ve hız: ${speed} kat"
                 true
             } catch (_: Exception) {
                 if (!wasPlaying) runCatching { videoView.pause() }
@@ -778,6 +757,7 @@ class VideoPlayerActivity : Activity() {
         }
         optionsRow.addView(sleepButton)
         optionsRow.addView(speedButton)
+        optionsRow.addView(View(activity), LinearLayout.LayoutParams(0, 1, 1f))
         optionsRow.addView(fullscreenButton)
         bottomBar.addView(seekBar)
         bottomBar.addView(bottomMetaRow)
@@ -822,12 +802,9 @@ class VideoPlayerActivity : Activity() {
                 if (!isMini) applyImmersiveFullscreen(window)
                 val landscape = newW > newH
                 fullscreenIconView.updateIcon(if (landscape) "exit_fullscreen" else "fullscreen")
-                fullscreenLabelTv.text = if (landscape) "Tam ekrandan çık" else "Tam ekran"
-                val barWidth = minOf(newW, dpToPx(460))
-                if (bottomBar.layoutParams.width != barWidth) bottomBar.layoutParams = (bottomBar.layoutParams as FrameLayout.LayoutParams).apply {
-                    width = barWidth
-                    gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-                }
+                fullscreenButton.contentDescription = if (landscape) "Dikey ekrana geç" else "Yatay ekrana geç"
+                val panelWidth = minOf((newW - dpToPx(20)).coerceAtLeast(1), dpToPx(440))
+                if (panel.layoutParams.width != panelWidth) panel.layoutParams = panel.layoutParams.apply { width = panelWidth }
                 val panelHeight = minOf(dpToPx(152), (newH * 0.43f).toInt())
                 if (panel.layoutParams.height != panelHeight) panel.layoutParams = panel.layoutParams.apply { height = panelHeight }
                 updateVideoBounds(newW, newH)

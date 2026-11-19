@@ -275,16 +275,18 @@ function MediaToolkitApp() {
 
       {/* Ana Gövde (Aktif Ekran) */}
       <View style={styles.tabContentArea}>
-        {activeTab === 'downloader' ? (
+        <View style={{ flex: 1, display: activeTab === 'downloader' ? 'flex' : 'none' }}>
           <DownloaderTab
             key={sharedRequest?.id || "default"}
             initialUrl={sharedRequest?.url || ""}
+            isActive={activeTab === 'downloader'}
             isDarkMode={isDarkMode}
             playerState={playerState}
             onOpenExpandedPlayer={() => setExpandedPlayerVisible(true)}
-            onSwitchToHistory={(item) => { setArchiveSearch(item?.title || ''); setSharedRequest(null); setActiveTab('history'); }}
+            onSwitchToHistory={(item) => { setArchiveSearch(item?.title || ''); setActiveTab('history'); }}
           />
-        ) : (
+        </View>
+        {activeTab === 'history' && (
           <HistoryTab
             initialSearch={archiveSearch}
             isDarkMode={isDarkMode}
@@ -432,7 +434,7 @@ function MediaToolkitApp() {
             activeTab === 'history' &&
               (isDarkMode ? styles.navItemActiveDark : styles.navItemActive),
           ]}
-          onPress={() => { setArchiveSearch(''); setSharedRequest(null); setActiveTab('history'); }}
+          onPress={() => { setArchiveSearch(''); setActiveTab('history'); }}
         >
           <Ionicons
             name={activeTab === 'history' ? 'folder' : 'folder-outline'}
