@@ -45,9 +45,19 @@ const SPEED_OPTIONS = [0.75, 1.0, 1.25, 1.5];
 const AUDIO_PRESET_OPTIONS = [
   { id: 'NORMAL', label: 'Normal' },
   { id: 'BASS', label: 'Bas+' },
+  { id: 'TREBLE', label: 'Tiz+' },
   { id: 'VOCAL', label: 'Vokal' },
+  { id: 'PARTY', label: 'Parti' },
   { id: 'LOUD', label: 'Yüksek Ses' },
 ];
+const AUDIO_PRESET_ROWS = [
+  AUDIO_PRESET_OPTIONS.slice(0, 3),
+  AUDIO_PRESET_OPTIONS.slice(3, 6),
+];
+const getAudioPresetLabel = (id) =>
+  id && id !== 'NORMAL'
+    ? AUDIO_PRESET_OPTIONS.find((opt) => opt.id === id)?.label || null
+    : null;
 const SLEEP_TIMER_OPTIONS = [
   { id: 'off', label: 'Kapalı', mins: 0, trackEnd: false },
   { id: '15', label: '15 dk', mins: 15, trackEnd: false },
@@ -723,20 +733,20 @@ function MediaToolkitApp() {
                         styles.advPillTextActive,
                     ]}
                   >
-                    {`${Number(playerState.playbackSpeed || 1).toFixed(
-                      playerState.playbackSpeed === 0.75 ||
-                        playerState.playbackSpeed === 1.25
-                        ? 2
-                        : 1
-                    )}x • ${
-                      playerState.audioPreset === 'BASS'
-                        ? 'Bas+'
-                        : playerState.audioPreset === 'VOCAL'
-                        ? 'Vokal'
-                        : playerState.audioPreset === 'LOUD'
-                        ? 'Yüksek'
-                        : 'EQ'
-                    }`}
+                    {(() => {
+                      const speed = Number(playerState.playbackSpeed || 1);
+                      const speedChanged = Math.abs(speed - 1.0) > 0.05;
+                      const presetLabel = getAudioPresetLabel(
+                        playerState.audioPreset
+                      );
+                      if (!speedChanged && !presetLabel) return 'Ses ve Hız';
+                      const speedLabel = `${speed.toFixed(
+                        speed === 0.75 || speed === 1.25 ? 2 : 1
+                      )}x`;
+                      if (speedChanged && presetLabel)
+                        return `${speedLabel} • ${presetLabel}`;
+                      return speedChanged ? speedLabel : presetLabel;
+                    })()}
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -816,8 +826,15 @@ function MediaToolkitApp() {
                   <Text style={[styles.subControlTitle, { marginTop: 8 }]}>
                     Ses ayarları
                   </Text>
-                  <View style={styles.subControlChipsRow}>
-                    {AUDIO_PRESET_OPTIONS.map((pr) => {
+                  {AUDIO_PRESET_ROWS.map((row, rowIndex) => (
+                  <View
+                    key={`preset-row-${rowIndex}`}
+                    style={[
+                      styles.subControlChipsRow,
+                      rowIndex > 0 && { marginTop: 6 },
+                    ]}
+                  >
+                    {row.map((pr) => {
                       const isSelected =
                         (playerState.audioPreset || 'NORMAL') === pr.id;
                       return (
@@ -841,6 +858,7 @@ function MediaToolkitApp() {
                       );
                     })}
                   </View>
+                  ))}
                 </View>
               )}
             </View>

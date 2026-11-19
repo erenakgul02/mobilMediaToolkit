@@ -23,9 +23,6 @@ import android.media.AudioAttributes
 import android.media.MediaMetadata
 import android.media.MediaPlayer
 import android.media.PlaybackParams
-import android.media.audiofx.BassBoost
-import android.media.audiofx.Equalizer
-import android.media.audiofx.LoudnessEnhancer
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
 import android.os.Build
@@ -182,7 +179,7 @@ class MusicPlayerService : Service() {
         }
 
         fun setAudioPresetState(preset: String) {
-            audioPreset = preset.uppercase()
+            audioPreset = AudioFxEngine.normalize(preset)
             instance?.applyAudioPresetInternal()
             emitStateToRN()
         }
@@ -293,9 +290,7 @@ class MusicPlayerService : Service() {
 
     private var mediaPlayer: MediaPlayer? = null
     private var mediaSession: MediaSession? = null
-    private var bassBoost: BassBoost? = null
-    private var equalizer: Equalizer? = null
-    private var loudnessEnhancer: LoudnessEnhancer? = null
+    private val audioFx = AudioFxEngine()
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val audioManager by lazy { getSystemService(Context.AUDIO_SERVICE) as AudioManager }
@@ -469,6 +464,23 @@ class MusicPlayerService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    // Uygulama "Son kullanılanlar" ekranından kaydırılıp kapatıldığında
+    // müziği durdur ve oynatma bildirimini tamamen kaldır.
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        // Sadece PiP video penceresi kapatıldıysa (ayrı görev) müziğe dokunma.
+        val removedClass = rootIntent?.component?.className.orEmpty()
+        if (removedClass.endsWith("VideoPlayerActivity")) {
+            super.onTaskRemoved(rootIntent)
+            return
+        }
+        mainHandler.removeCallbacksAndMessages(null)
+        stopPlayerAndService()
+        runCatching {
+            (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).cancel(NOTIFICATION_ID)
+        }
+        super.onTaskRemoved(rootIntent)
+    }
+
     override fun onDestroy() {
         saveCurrentTrackResumePosition()
         mainHandler.removeCallbacksAndMessages(null)
@@ -574,89 +586,23 @@ class MusicPlayerService : Service() {
         mainHandler.post {
             val mp = mediaPlayer ?: return@post
             if (!playerPrepared) return@post
-            if (audioPreset == "NORMAL") { releaseAudioEffects(); return@post }
-            val sessionId = mp.audioSessionId
-            if (sessionId <= 0) return@post
-
-            try {
-                if (bassBoost == null) {
-                    bassBoost = BassBoost(0, sessionId)
-                }
-                if (equalizer == null) {
-                    equalizer = Equalizer(0, sessionId)
-                }
-                if (loudnessEnhancer == null) {
-                    loudnessEnhancer = LoudnessEnhancer(sessionId)
-                }
+            val ok = try {
+                audioFx.apply(mp.audioSessionId, audioPreset)
             } catch (e: Exception) {
-                releaseAudioEffects()
-                Log.w(TAG, "Ses efekt motoru başlatma uyarısı: ${e.message}")
-                return@post
-            }
-
-            try {
-                when (audioPreset) {
-                    "BASS" -> {
-                        bassBoost?.enabled = true
-                        bassBoost?.setStrength(850.toShort())
-                        loudnessEnhancer?.enabled = true
-                        loudnessEnhancer?.setTargetGain(300)
-                        equalizer?.let { eq ->
-                            eq.enabled = true
-                            val bands = eq.numberOfBands.toInt()
-                            val maxLevel = eq.bandLevelRange[1]
-                            if (bands >= 1) eq.setBandLevel(0.toShort(), (maxLevel * 0.75).toInt().toShort())
-                            if (bands >= 2) eq.setBandLevel(1.toShort(), (maxLevel * 0.45).toInt().toShort())
-                        }
-                    }
-                    "VOCAL" -> {
-                        bassBoost?.enabled = false
-                        loudnessEnhancer?.enabled = true
-                        loudnessEnhancer?.setTargetGain(250)
-                        equalizer?.let { eq ->
-                            eq.enabled = true
-                            val bands = eq.numberOfBands.toInt()
-                            val maxLevel = eq.bandLevelRange[1]
-                            for (b in 0 until bands) {
-                                val ratio = if (b == bands / 2 || b == (bands / 2) + 1) 0.65 else -0.15
-                                eq.setBandLevel(b.toShort(), (maxLevel * ratio).toInt().toShort())
-                            }
-                        }
-                    }
-                    "LOUD" -> {
-                        bassBoost?.enabled = true
-                        bassBoost?.setStrength(500.toShort())
-                        loudnessEnhancer?.enabled = true
-                        loudnessEnhancer?.setTargetGain(750)
-                        equalizer?.enabled = false
-                    }
-                    else -> {
-                        // NORMAL
-                        bassBoost?.enabled = false
-                        loudnessEnhancer?.enabled = false
-                        equalizer?.enabled = false
-                    }
-                }
-            } catch (e: Exception) {
-                releaseAudioEffects()
                 Log.w(TAG, "Ses profili uygulanamadı: ${e.message}")
+                false
+            }
+            if (!ok && audioPreset != "NORMAL") {
+                audioPreset = "NORMAL"
+                audioFx.release()
+                emitStateToRN()
+                android.widget.Toast.makeText(this, "Bu cihazda bu ses ayarı desteklenmiyor.", android.widget.Toast.LENGTH_SHORT).show()
             }
         }
     }
 
     private fun releaseAudioEffects() {
-        try {
-            bassBoost?.release()
-        } catch (_: Exception) {}
-        bassBoost = null
-        try {
-            equalizer?.release()
-        } catch (_: Exception) {}
-        equalizer = null
-        try {
-            loudnessEnhancer?.release()
-        } catch (_: Exception) {}
-        loudnessEnhancer = null
+        audioFx.release()
     }
 
     private fun createNotificationChannel() {

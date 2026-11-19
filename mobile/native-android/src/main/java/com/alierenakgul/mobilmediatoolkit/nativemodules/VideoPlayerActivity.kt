@@ -38,7 +38,7 @@ class VideoPlayerActivity : Activity() {
     private var lastPipState = ""
     private var resumeAfterStop = false
     private var foregroundVisible = false
-    private val audioEffects = VideoAudioEffects()
+    private val audioEffects = AudioFxEngine()
     private var sleepDeadlineMs = 0L
     private var sleepAtEnd = false
     private var refreshOptions: (() -> Unit)? = null
@@ -718,15 +718,23 @@ class VideoPlayerActivity : Activity() {
                     val speeds = listOf(0.75f, 1f, 1.5f, 2f)
                     choices(listOf("0.75×", "1×", "1.5×", "2×"), speeds.indexOf(videoSpeed)) { applyVideoSpeed(speeds[it]) }
                     heading("Ses ayarları")
-                    val presets = listOf("NORMAL", "BASS", "VOCAL", "LOUD")
-                    choices(listOf("Normal", "Bas+", "Vokal", "Yüksek ses"), presets.indexOf(audioPreset)) {
-                        val preset = presets[it]
+                    val presets = AudioFxEngine.PRESETS
+                    val labels = AudioFxEngine.LABELS
+                    val selectedPreset = presets.indexOf(audioPreset)
+                    val onPreset: (Int) -> Unit = { index ->
+                        val preset = presets[index]
                         if (audioEffects.apply(videoPlayer?.audioSessionId ?: 0, preset)) audioPreset = preset
                         else {
                             audioPreset = "NORMAL"
+                            audioEffects.release()
                             Toast.makeText(activity, "Bu cihazda bu ses ayarı desteklenmiyor.", Toast.LENGTH_SHORT).show()
                         }
                     }
+                    // 6 profil: 3'erli iki satır halinde
+                    choices(labels.subList(0, 3), selectedPreset) { onPreset(it) }
+                    choices(labels.subList(3, 6), if (selectedPreset >= 3) selectedPreset - 3 else -1) { onPreset(it + 3) }
+                    (panelContent.getChildAt(panelContent.childCount - 1)?.layoutParams as? android.view.ViewGroup.MarginLayoutParams)
+                        ?.topMargin = dpToPx(6)
                 } else {
                     heading("Uyku zamanlayıcısı")
                     val remaining = ((sleepDeadlineMs - android.os.SystemClock.elapsedRealtime()).coerceAtLeast(0) + 59999) / 60000
